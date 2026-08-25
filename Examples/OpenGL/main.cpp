@@ -1,4 +1,4 @@
-
+﻿
 #include <stdio.h>
 #include <string>
 
@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 
 	// Load an effect
 	// エフェクトの読込
-	auto effect = Effekseer::Effect::Create(efkManager, EFK_EXAMPLE_ASSETS_DIR_U16 "Laser01.efkefc");
+	auto effect = Effekseer::Effect::Create(efkManager, EFK_EXAMPLE_ASSETS_DIR_U16 u"Laser01.efkefc");
 
 	int32_t time = 0;
 	Effekseer::Handle efkHandle = 0;
@@ -75,9 +75,9 @@ int main(int argc, char** argv)
 		Effekseer::Manager::UpdateParameter updateParameter;
 		efkManager->Update(updateParameter);
 
-		// Execute functions about DirectX
-		// DirectXの処理
-		device.ClearScreen();
+		// Begin to rendering pass
+		// 描画パスの開始
+		device.BeginRenderPass();
 
 		// Update a time
 		// 時間を更新する
@@ -107,8 +107,12 @@ int main(int argc, char** argv)
 		// エフェクトの描画終了処理を行う。
 		efkRenderer->EndRendering();
 
-		// Execute functions about DirectX
-		// DirectXの処理
+		// Finish to rendering pass
+		// 描画パスの終了
+		device.EndRenderPass();
+
+		// Update the display
+		// ディスプレイを更新
 		device.PresentDevice();
 
 		time++;

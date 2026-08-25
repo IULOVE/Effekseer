@@ -4,34 +4,32 @@ How to build
 Requirements
 ----------
 
-### Windows
+### Common
 
 - git
+- [.Net9.0 SDK](https://dotnet.microsoft.com/ja-jp/download/dotnet/9.0)
+- cmake (3.23 or later)
+- python3 (3.12 or later)
+
+### Windows
+
 - git-lfs [Download](https://git-lfs.github.com/)
-- Visual Studio 2019 or later
-- .Net6.0 SDK
-- cmake (3.15 or later)
-- python3 (3.8 or later)
+- Visual Studio 2022 or later
 
 ### macOS
 
-- git
-- git-lfs
 - Xcode
-- .Net6.0 SDK
 - Visual Studio for Mac (msbuild)
-- cmake
 
 [How to install git-lfs](https://github.com/git-lfs/git-lfs/wiki/Installation)
 
 ### Linux
 
-- git
-- git-lfs
 - g++
-- [.Net6.0 SDK](https://docs.microsoft.com/en-us/dotnet/core/install/linux-ubuntu)
 
-- libx11-dev libgl1-mesa-dev libxrandr-dev libxi-dev x11proto-xf86vidmode-dev libx11-xcb-dev xorg-dev libglu1-mesa-dev libpulse-dev libgtk-3-dev libopenal-dev python3-distutils zenity
+- Required packages:
+  - Ubuntu: `libx11-dev libgl1-mesa-dev libxrandr-dev libxi-dev x11proto-xf86vidmode-dev libx11-xcb-dev xorg-dev libglu1-mesa-dev libpulse-dev libgtk-3-dev libopenal-dev python3-distutils zenity`
+  - Fedora 40: `gtk3-devel pulseaudio-libs-devel openal-soft-devel mesa-libGLU-devel libX11-devel libxcb-devel libXi-devel libXrandr-devel mesa-libGL-devel python3 dotnet zenity ninja-build`
 
 Get code and resources
 ----------
@@ -48,7 +46,7 @@ git lfs install
 git lfs pull
 ```
 
-Build to develop Editor
+Build to develop the Editor
 ----------
 
 ### Windows
@@ -69,7 +67,7 @@ cmake -DBUILD_VIEWER=ON -DBUILD_EDITOR=ON ..
 
 ### macOS
 
-Execure following command at the repository root.
+Execute the following command at the repository root.
 
 ```
 mkdir build
@@ -115,7 +113,7 @@ cd Dev/release
 
 * Windows
 
-Visual Studio 2017 are required.
+Visual Studio 2022 is required.
 
 Please read ``` .github/workflows/build.yml ```
 
@@ -126,3 +124,9 @@ Please read ``` .github/workflows/build.yml ```
 * Linux
 
 Please read ``` .github/workflows/build.yml ```
+
+The C++ runtime package can be created on any platform using:
+
+```
+python3 release_cpp.py
+```

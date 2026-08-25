@@ -9,9 +9,9 @@
 #include "Effekseer.Matrix43.h"
 #include "Effekseer.Matrix44.h"
 #include "Effekseer.WorkerThread.h"
-#include "Geometry/GeometryUtility.h"
+#include "Geometry/Effekseer.GeometryUtility.h"
 #include "Utils/Effekseer.CustomAllocator.h"
-#include "Utils/InstancePool.h"
+#include "Utils/Effekseer.InstancePool.h"
 
 namespace Effekseer
 {
@@ -44,6 +44,7 @@ public:
 
 		Matrix43 Rotation;
 		Vector3D Scaling = {1.f, 1.f, 1.f};
+		EffectFlipParameter EffectFlip;
 
 		SIMD::Mat43f BaseMatrix;
 
@@ -116,16 +117,18 @@ public:
 	};
 
 private:
-	CustomVector<WorkerThread> m_WorkerThreads;
+	CustomVector<WorkerThread> workerThreads_;
 
 	//! whether does rendering and update handle flipped automatically
-	bool m_autoFlip = true;
+	bool autoFlip_ = true;
 
 	//! next handle
-	Handle m_NextHandle = 0;
+	Handle nextHandle_ = 0;
 
 	// 確保済みインスタンス数
-	int m_instance_max;
+	int instanceMax_;
+
+	int nextComputeCount_;
 
 	/**
 		@note
@@ -143,51 +146,63 @@ private:
 	std::array<int32_t, GenerationsMax> creatableChunkOffsets_;
 
 	// playing objects
-	CustomAlignedMap<Handle, DrawSet> m_DrawSets;
+	CustomAlignedMap<Handle, DrawSet> drawSets_;
 
 	//! objects which are waiting to be disposed
-	std::array<CustomAlignedMap<Handle, DrawSet>, 2> m_RemovingDrawSets;
+	std::array<CustomAlignedMap<Handle, DrawSet>, 2> removingDrawSets_;
 
 	//! objects on rendering
-	CustomAlignedVector<DrawSet> m_renderingDrawSets;
+	CustomAlignedVector<DrawSet> renderingDrawSets_;
 
 	//! objects on rendering temporaly (sorted)
 	CustomAlignedVector<DrawSet> sortedRenderingDrawSets_;
 
 	//! objects on rendering
-	CustomAlignedMap<Handle, DrawSet> m_renderingDrawSetMaps;
+	CustomAlignedMap<Handle, DrawSet> renderingDrawSetMaps_;
 
 	// mutex for rendering
-	std::recursive_mutex m_renderingMutex;
-	bool m_isLockedWithRenderingMutex = false;
+	std::recursive_mutex renderingMutex_;
+	bool isLockedWithRenderingMutex_ = false;
 
-	SettingRef m_setting;
+	SettingRef setting_;
+	CoordinateSystemMode coordinateSystemMode_ = CoordinateSystemMode::LegacySimulation;
+	CoordinateSystem externalCoordinateSystem_ = CoordinateSystem::RH;
+	CoordinateSystemTransform coordinateSystemTransform_;
+	CoordinateSystemConverter coordinateSystemConverter_;
+	bool hasCustomCoordinateSystemTransform_ = false;
 
-	int m_updateTime;
-	int m_drawTime;
+	int updateTime_;
+	int computeTime_;
+	int drawTime_;
+	Manager::DrawTime drawTimeBreakdown_;
 
-	uint32_t m_sequenceNumber;
+	uint32_t sequenceNumber_;
 
-	SpriteRendererRef m_spriteRenderer;
+	SpriteRendererRef spriteRenderer_;
 
-	RibbonRendererRef m_ribbonRenderer;
+	RibbonRendererRef ribbonRenderer_;
 
-	RingRendererRef m_ringRenderer;
+	RingRendererRef ringRenderer_;
 
-	ModelRendererRef m_modelRenderer;
+	ModelRendererRef modelRenderer_;
 
-	TrackRendererRef m_trackRenderer;
+	TrackRendererRef trackRenderer_;
 
-	GPUTimerRef m_gpuTimer;
+	GpuParticleSystemRef gpuParticleSystem_;
 
-	SoundPlayerRef m_soundPlayer;
+	GpuTimerRef gpuTimer_;
 
-	RandFunc m_randFunc;
+	SoundPlayerRef soundPlayer_;
 
-	std::array<LayerParameter, LayerCount> m_layerParameters;
+	RandFunc randFunc_;
+	CollisionCallback collisionCallback_;
+	CollisionCallback internalCollisionCallback_;
 
-	std::queue<std::pair<SoundTag, SoundPlayer::InstanceParameter>> m_requestedSounds;
-	std::mutex m_soundMutex;
+	std::array<LayerParameter, LayerCount> layerParameters_;
+	std::array<LayerParameter, LayerCount> externalLayerParameters_;
+
+	std::queue<std::pair<SoundTag, SoundPlayer::InstanceParameter>> requestedSounds_;
+	std::mutex soundMutex_;
 
 	Handle AddDrawSet(const EffectRef& effect, InstanceContainer* pInstanceContainer, InstanceGlobal* pGlobalPointer);
 
@@ -202,9 +217,37 @@ private:
 
 	void ExecuteSounds();
 
-	void StoreSortingDrawSets(const Manager::DrawParameter& drawParameter);
+	void StoreSortingDrawSets(
+		const Manager::DrawParameter& drawParameter,
+		const EffectRenderingTransformParameter& renderingCoordinateTransform);
 
-	static bool CanDraw(const DrawSet& drawSet, const Manager::DrawParameter& drawParameter, const std::array<Plane, 6>& planes);
+	static bool CanDraw(
+		const DrawSet& drawSet,
+		const Manager::DrawParameter& drawParameter,
+		const std::array<Plane, 6>& planes,
+		const EffectRenderingTransformParameter& renderingCoordinateTransform);
+
+	static void ApplyRenderingCoordinateTransform(
+		DrawSet& drawSet,
+		const EffectRenderingTransformParameter& renderingCoordinateTransform);
+
+	void RefreshCoordinateSystemBoundaryState();
+
+	EffectRenderingTransformParameter CalculateDrawRenderingCoordinateTransform(const Matrix44& drawCoordinateMatrix) const;
+
+	void SetMatrixInternal(Handle handle, const Matrix43& mat);
+
+	void SetLocationInternal(Handle handle, const Vector3D& location);
+
+	void AddLocationInternal(Handle handle, const Vector3D& location);
+
+	void SetRotationInternal(Handle handle, const Matrix43& rotation);
+
+	void SetScaleInternal(Handle handle, const Vector3D& scale);
+
+	void SetTargetLocationInternal(Handle handle, const Vector3D& location);
+
+	Handle PlayInternal(const EffectRef& effect, const Vector3D& position, int32_t startFrame);
 
 public:
 	ManagerImplemented(int instance_max, bool autoFlip);
@@ -234,6 +277,20 @@ public:
 
 	void SetCoordinateSystem(CoordinateSystem coordinateSystem) override;
 
+	CoordinateSystemMode GetCoordinateSystemMode() const override;
+
+	void SetCoordinateSystemMode(CoordinateSystemMode mode) override;
+
+	CoordinateSystemTransform GetCoordinateSystemTransform() const override;
+
+	bool SetCoordinateSystemTransform(const CoordinateSystemTransform& transform) override;
+
+	void SetCollisionCallback(CollisionCallback callback) override;
+
+	CollisionCallback GetCollisionCallback() const override;
+
+	CollisionCallback GetInternalCollisionCallback() const;
+
 	SpriteRendererRef GetSpriteRenderer() override;
 
 	void SetSpriteRenderer(SpriteRendererRef renderer) override;
@@ -254,9 +311,17 @@ public:
 
 	void SetTrackRenderer(TrackRendererRef renderer) override;
 
-	GPUTimerRef GetGPUTimer() override;
+	GpuTimerRef GetGpuTimer() override;
 
-	void SetGPUTimer(GPUTimerRef gpuTimer) override;
+	void SetGpuTimer(GpuTimerRef gpuTimer) override;
+
+	GpuParticleSystemRef GetGpuParticleSystem() override;
+
+	void SetGpuParticleSystem(GpuParticleSystemRef system) override;
+
+	GpuParticleFactoryRef GetGpuParticleFactory() override;
+
+	void SetGpuParticleFactory(GpuParticleFactoryRef factory) override;
 
 	const SettingRef& GetSetting() const override;
 
@@ -310,6 +375,8 @@ public:
 
 	const LayerParameter& GetLayerParameter(int32_t layer) const override;
 
+	const LayerParameter& GetInternalLayerParameter(int32_t layer) const;
+
 	void SetLayerParameter(int32_t layer, const LayerParameter& layerParameter) override;
 
 	Matrix43 GetMatrix(Handle handle) override;
@@ -326,6 +393,10 @@ public:
 	void SetRotation(Handle handle, const Vector3D& axis, float angle) override;
 
 	void SetScale(Handle handle, float x, float y, float z) override;
+
+	EffectFlipParameter GetEffectFlip(Handle handle) const override;
+
+	void SetEffectFlip(Handle handle, const EffectFlipParameter& flip) override;
 
 	void SetAllColor(Handle handle, Color color) override;
 
@@ -407,13 +478,19 @@ private:
 	void Preupdate(DrawSet& drawSet);
 
 	//! whether container is disabled while rendering because of a distance between the effect and a camera
-	bool IsClippedWithDepth(DrawSet& drawSet, InstanceContainer* container, const Manager::DrawParameter& drawParameter);
+	bool IsClippedWithDepth(
+		DrawSet& drawSet,
+		InstanceContainer* container,
+		const Manager::DrawParameter& drawParameter,
+		const EffectRenderingTransformParameter& renderingCoordinateTransform);
 
 	void StopWithoutRemoveDrawSet(DrawSet& drawSet);
 
 	void ResetAndPlayWithDataSet(DrawSet& drawSet, float frame);
 
 public:
+	void Compute() override;
+
 	void Draw(const Manager::DrawParameter& drawParameter) override;
 
 	void DrawBack(const Manager::DrawParameter& drawParameter) override;
@@ -432,15 +509,19 @@ public:
 
 	Handle Play(const EffectRef& effect, const Vector3D& position, int32_t startFrame) override;
 
+	Handle Play(const PlayParameter& parameter) override;
+
 	int GetCameraCullingMaskToShowAllEffects() override;
 
 	int GetUpdateTime() const override;
 
 	int GetDrawTime() const override;
 
-	int32_t GetGPUTime() const override;
+	Manager::DrawTime GetDrawTimeBreakdown() const override;
 
-	int32_t GetGPUTime(Handle handle) const override;
+	int32_t GetGpuTime() const override;
+
+	int32_t GetGpuTime(Handle handle) const override;
 
 	int32_t GetRestInstancesCount() const override;
 
@@ -450,7 +531,7 @@ public:
 
 	const CustomAlignedMap<Handle, DrawSet>& GetPlayingDrawSets() const
 	{
-		return m_DrawSets;
+		return drawSets_;
 	}
 
 	virtual int GetRef() override

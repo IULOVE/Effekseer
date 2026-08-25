@@ -304,8 +304,12 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 
 	HRESULT hr;
 	LPDIRECT3DTEXTURE9 texture = nullptr;
-	hr =
-		device->CreateTexture(param.Size[0], param.Size[1], 1, param.MipLevelCount < 1 ? D3DUSAGE_AUTOGENMIPMAP : 0, format, D3DPOOL_DEFAULT, &texture, nullptr);
+	const auto baseTextureSize = sizePerWidth * height;
+	const bool hasProvidedMipData = param.MipLevelCount > 1 && initialData.size() > static_cast<size_t>(baseTextureSize);
+	const bool shouldGenerateMips = param.MipLevelCount < 1 || (param.MipLevelCount > 1 && !hasProvidedMipData);
+	const auto mipLevels = shouldGenerateMips ? 0 : param.MipLevelCount;
+	const auto usage = shouldGenerateMips ? D3DUSAGE_AUTOGENMIPMAP : 0;
+	hr = device->CreateTexture(param.Size[0], param.Size[1], mipLevels, usage, format, D3DPOOL_DEFAULT, &texture, nullptr);
 
 	if (FAILED(hr))
 	{
@@ -313,7 +317,8 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 	}
 
 	LPDIRECT3DTEXTURE9 tempTexture = nullptr;
-	hr = device->CreateTexture(param.Size[0], param.Size[1], 1, 0, format, D3DPOOL_SYSTEMMEM, &tempTexture, nullptr);
+	const auto tempMipLevels = hasProvidedMipData ? param.MipLevelCount : 1;
+	hr = device->CreateTexture(param.Size[0], param.Size[1], tempMipLevels, 0, format, D3DPOOL_SYSTEMMEM, &tempTexture, nullptr);
 
 	if (FAILED(hr))
 	{
@@ -324,32 +329,46 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 	if (initialData.size() > 0)
 	{
 		const uint8_t* srcBits = static_cast<const uint8_t*>(initialData.data());
-		D3DLOCKED_RECT locked;
-		if (SUCCEEDED(tempTexture->LockRect(0, &locked, nullptr, 0)))
+		const auto uploadMipLevelCount = hasProvidedMipData ? param.MipLevelCount : 1;
+		for (int32_t mipLevel = 0; mipLevel < uploadMipLevelCount; mipLevel++)
 		{
-			uint8_t* destBits = (uint8_t*)locked.pBits;
+			const int32_t mipWidth = Effekseer::Max(param.Size[0] >> mipLevel, 1);
+			const int32_t mipHeight = Effekseer::Max(param.Size[1] >> mipLevel, 1);
+			int32_t mipSizePerWidth = 0;
+			int32_t mipHeightCount = 0;
+			EffekseerRenderer::CalculateAlignedTextureInformation(param.Format, {mipWidth, mipHeight}, mipSizePerWidth, mipHeightCount);
 
-			for (int32_t h = 0; h < height; h++)
+			D3DLOCKED_RECT locked;
+			if (SUCCEEDED(tempTexture->LockRect(mipLevel, &locked, nullptr, 0)))
 			{
-				memcpy(destBits, srcBits, sizePerWidth);
+				uint8_t* destBits = (uint8_t*)locked.pBits;
 
-				// SwapRGB
-				if (isSwapRequired)
+				for (int32_t h = 0; h < mipHeightCount; h++)
 				{
-					int32_t sizePerPixel = sizePerWidth / param.Size[0];
-					for (int32_t w = 0; w < param.Size[0]; w++)
+					memcpy(destBits, srcBits, mipSizePerWidth);
+
+					// SwapRGB
+					if (isSwapRequired)
 					{
-						std::swap(destBits[w * sizePerPixel + 0 * sizePerPixel / 4], destBits[w * sizePerPixel + 2 * sizePerPixel / 4]);
+						int32_t sizePerPixel = mipSizePerWidth / mipWidth;
+						for (int32_t w = 0; w < mipWidth; w++)
+						{
+							std::swap(destBits[w * sizePerPixel + 0 * sizePerPixel / 4], destBits[w * sizePerPixel + 2 * sizePerPixel / 4]);
+						}
 					}
+
+					destBits += locked.Pitch;
+					srcBits += mipSizePerWidth;
 				}
 
-				destBits += locked.Pitch;
-				srcBits += sizePerWidth;
+				tempTexture->UnlockRect(mipLevel);
 			}
-
-			tempTexture->UnlockRect(0);
 		}
 		hr = device->UpdateTexture(tempTexture, texture);
+		if (SUCCEEDED(hr) && shouldGenerateMips)
+		{
+			texture->GenerateMipSubLevels();
+		}
 	}
 
 	ES_SAFE_RELEASE(tempTexture);
@@ -499,8 +518,10 @@ VertexLayout::~VertexLayout()
 	ES_SAFE_RELEASE(graphicsDevice_);
 }
 
-void VertexLayout::MakeGenerated()
+void VertexLayout::MakeGenerated(bool hasInstanceIndex)
 {
+	hasInstanceIndex_ = hasInstanceIndex;
+
 	for (size_t i = 0; i < elements_.size(); i++)
 	{
 		elements_[i].SemanticName = "TEXCOORD";
@@ -560,6 +581,18 @@ bool VertexLayout::Generate()
 		elements.emplace_back(e9);
 	}
 
+	if (hasInstanceIndex_)
+	{
+		D3DVERTEXELEMENT9 e9;
+		e9.Stream = 1;
+		e9.Offset = 0;
+		e9.Type = D3DDECLTYPE_FLOAT1;
+		e9.Method = D3DDECLMETHOD_DEFAULT;
+		e9.Usage = D3DDECLUSAGE_TEXCOORD;
+		e9.UsageIndex = static_cast<BYTE>(elements_.size());
+		elements.emplace_back(e9);
+	}
+
 	elements.emplace_back(D3DVERTEXELEMENT9 D3DDECL_END());
 
 	HRESULT hr;
@@ -573,7 +606,7 @@ bool VertexLayout::Generate()
 
 	vertexDeclaration_ = Effekseer::CreateUniqueReference(vertexDeclaration);
 
-	true;
+	return true;
 }
 
 bool VertexLayout::Init(const Effekseer::Backend::VertexLayoutElement* elements, int32_t elementCount)
@@ -617,14 +650,14 @@ bool Shader::GenerateShaders()
 
 	if (FAILED(hr))
 	{
-		return nullptr;
+		return false;
 	}
 
 	hr = device->CreatePixelShader((const DWORD*)pixelShaderData_.data(), &pixelShader_);
 
 	if (FAILED(hr))
 	{
-		return nullptr;
+		return false;
 	}
 
 	return true;

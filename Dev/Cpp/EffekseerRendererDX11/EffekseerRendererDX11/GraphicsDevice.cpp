@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include "GraphicsDevice.h"
 #include <EffekseerRendererCommon/EffekseerRenderer.CommonUtils.h>
 
@@ -156,6 +157,10 @@ DXGI_FORMAT GetTextureFormatType(Effekseer::Backend::TextureFormatType format)
 	{
 		return DXGI_FORMAT_BC3_UNORM;
 	}
+	else if (format == Effekseer::Backend::TextureFormatType::BC7)
+	{
+		return DXGI_FORMAT_BC7_UNORM;
+	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC1_SRGB)
 	{
 		return DXGI_FORMAT_BC1_UNORM_SRGB;
@@ -168,8 +173,20 @@ DXGI_FORMAT GetTextureFormatType(Effekseer::Backend::TextureFormatType format)
 	{
 		return DXGI_FORMAT_BC3_UNORM_SRGB;
 	}
+	else if (format == Effekseer::Backend::TextureFormatType::BC7_SRGB)
+	{
+		return DXGI_FORMAT_BC7_UNORM_SRGB;
+	}
 
 	return DXGI_FORMAT_UNKNOWN;
+}
+
+int32_t GetTextureDataSize(Effekseer::Backend::TextureFormatType format, int32_t width, int32_t height, int32_t depth = 1)
+{
+	int32_t sizePerWidth = 0;
+	int32_t alignedHeight = 0;
+	EffekseerRenderer::CalculateAlignedTextureInformation(format, {width, height}, sizePerWidth, alignedHeight);
+	return sizePerWidth * alignedHeight * depth;
 }
 
 D3D11InputLayoutPtr CreateInputLayout(GraphicsDevice& graphicsDevice, VertexLayoutRef vertexLayout, const void* vertexBufferData, int32_t vertexBufferSize)
@@ -224,16 +241,16 @@ void DeviceObject::OnResetDevice()
 }
 
 VertexBuffer::VertexBuffer(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
-	graphicsDevice_->Register(this);
+	ES_SAFE_ADDREF(graphics_device_);
+	graphics_device_->Register(this);
 }
 
 VertexBuffer::~VertexBuffer()
 {
-	graphicsDevice_->Unregister(this);
-	ES_SAFE_RELEASE(graphicsDevice_);
+	graphics_device_->Unregister(this);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool VertexBuffer::Allocate(const void* src, int32_t size, bool isDynamic)
@@ -254,7 +271,7 @@ bool VertexBuffer::Allocate(const void* src, int32_t size, bool isDynamic)
 	hSubResourceData.SysMemSlicePitch = 0;
 
 	ID3D11Buffer* vb = nullptr;
-	HRESULT hr = graphicsDevice_->GetDevice()->CreateBuffer(&hBufferDesc, src != nullptr ? &hSubResourceData : 0, &vb);
+	HRESULT hr = graphics_device_->GetDevice()->CreateBuffer(&hBufferDesc, src != nullptr ? &hSubResourceData : 0, &vb);
 	if (FAILED(hr))
 	{
 		return false;
@@ -262,7 +279,7 @@ bool VertexBuffer::Allocate(const void* src, int32_t size, bool isDynamic)
 
 	buffer_ = Effekseer::CreateUniqueReference(vb);
 
-	if (isDynamic_)
+	if (is_dynamic_)
 	{
 		blocks_.Allocate(size, 0);
 	}
@@ -282,15 +299,15 @@ void VertexBuffer::OnLostDevice()
 
 void VertexBuffer::OnResetDevice()
 {
-	Allocate(nullptr, size_, isDynamic_);
+	Allocate(nullptr, size_, is_dynamic_);
 }
 
 bool VertexBuffer::Init(const void* src, int32_t size, bool isDynamic)
 {
 	size_ = size;
-	isDynamic_ = isDynamic;
+	is_dynamic_ = isDynamic;
 
-	return Allocate(src, size_, isDynamic_);
+	return Allocate(src, size_, is_dynamic_);
 }
 
 void VertexBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
@@ -301,14 +318,14 @@ void VertexBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
 
 	D3D11_MAPPED_SUBRESOURCE mappedResource;
 
-	if (isDynamic_)
+	if (is_dynamic_)
 	{
-		graphicsDevice_->GetContext()->Map(
+		graphics_device_->GetContext()->Map(
 			buffer_.get(), 0, dirtied ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mappedResource);
 	}
 	else
 	{
-		graphicsDevice_->GetContext()->Map(
+		graphics_device_->GetContext()->Map(
 			buffer_.get(), 0, D3D11_MAP_READ_WRITE, 0, &mappedResource);
 	}
 
@@ -317,7 +334,7 @@ void VertexBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
 	dst += offset;
 	memcpy(dst, src, size);
 
-	graphicsDevice_->GetContext()->Unmap(buffer_.get(), 0);
+	graphics_device_->GetContext()->Unmap(buffer_.get(), 0);
 }
 
 void VertexBuffer::MakeAllDirtied()
@@ -326,16 +343,16 @@ void VertexBuffer::MakeAllDirtied()
 }
 
 IndexBuffer::IndexBuffer(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
-	graphicsDevice_->Register(this);
+	ES_SAFE_ADDREF(graphics_device_);
+	graphics_device_->Register(this);
 }
 
 IndexBuffer::~IndexBuffer()
 {
-	graphicsDevice_->Unregister(this);
-	ES_SAFE_RELEASE(graphicsDevice_);
+	graphics_device_->Unregister(this);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool IndexBuffer::Allocate(const void* src, int32_t elementCount, int32_t stride)
@@ -354,7 +371,7 @@ bool IndexBuffer::Allocate(const void* src, int32_t elementCount, int32_t stride
 	hSubResourceData.SysMemSlicePitch = 0;
 
 	ID3D11Buffer* ib = nullptr;
-	if (FAILED(graphicsDevice_->GetDevice()->CreateBuffer(&hBufferDesc, src != nullptr ? &hSubResourceData : nullptr, &ib)))
+	if (FAILED(graphics_device_->GetDevice()->CreateBuffer(&hBufferDesc, src != nullptr ? &hSubResourceData : nullptr, &ib)))
 	{
 		return false;
 	}
@@ -397,7 +414,7 @@ void IndexBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
 
 	D3D11_MAPPED_SUBRESOURCE mappedResource;
 
-	graphicsDevice_->GetContext()->Map(
+	graphics_device_->GetContext()->Map(
 		buffer_.get(), 0, D3D11_MAP_READ_WRITE, 0, &mappedResource);
 
 	auto dst = static_cast<uint8_t*>(mappedResource.pData);
@@ -405,20 +422,20 @@ void IndexBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
 	dst += offset;
 	memcpy(dst, src, size);
 
-	graphicsDevice_->GetContext()->Unmap(buffer_.get(), 0);
+	graphics_device_->GetContext()->Unmap(buffer_.get(), 0);
 }
 
 UniformBuffer::UniformBuffer(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
-	graphicsDevice_->Register(this);
+	ES_SAFE_ADDREF(graphics_device_);
+	graphics_device_->Register(this);
 }
 
 UniformBuffer ::~UniformBuffer()
 {
-	graphicsDevice_->Unregister(this);
-	ES_SAFE_RELEASE(graphicsDevice_);
+	graphics_device_->Unregister(this);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool UniformBuffer::Init(int32_t size, const void* initialData)
@@ -437,7 +454,7 @@ bool UniformBuffer::Init(int32_t size, const void* initialData)
 	hSubResourceData.SysMemSlicePitch = 0;
 
 	ID3D11Buffer* buffer;
-	if (FAILED(graphicsDevice_->GetDevice()->CreateBuffer(&hBufferDesc, initialData != nullptr ? &hSubResourceData : nullptr, &buffer)))
+	if (FAILED(graphics_device_->GetDevice()->CreateBuffer(&hBufferDesc, initialData != nullptr ? &hSubResourceData : nullptr, &buffer)))
 	{
 		return false;
 	}
@@ -452,7 +469,7 @@ bool UniformBuffer::Init(int32_t size, const void* initialData)
 	}
 	else
 	{
-		isDirtied_ = true;
+		is_dirtied_ = true;
 	}
 
 	return true;
@@ -467,34 +484,109 @@ void UniformBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
 		memcpy(data_.data() + offset, src, size);
 	}
 
-	isDirtied_ = true;
+	is_dirtied_ = true;
 }
 
 void UniformBuffer::UpdateDataActually()
 {
-	if (!isDirtied_)
+	if (!is_dirtied_)
 		return;
-	isDirtied_ = false;
+	is_dirtied_ = false;
 
-	graphicsDevice_->GetContext()->UpdateSubresource(buffer_.get(), 0, nullptr, data_.data(), 0, 0);
+	graphics_device_->GetContext()->UpdateSubresource(buffer_.get(), 0, nullptr, data_.data(), 0, 0);
 }
 
 bool UniformBuffer::GetIsDirtied() const
 {
-	return isDirtied_;
+	return is_dirtied_;
+}
+
+StorageBuffer::StorageBuffer(GraphicsDevice* graphicsDevice)
+	: graphics_device_(graphicsDevice)
+{
+	ES_SAFE_ADDREF(graphics_device_);
+	graphics_device_->Register(this);
+}
+
+StorageBuffer::~StorageBuffer()
+{
+	graphics_device_->Unregister(this);
+	ES_SAFE_RELEASE(graphics_device_);
+}
+
+bool StorageBuffer::Init(int32_t elementCount, int32_t elementSize, const void* initialData)
+{
+	D3D11_BUFFER_DESC hBufferDesc;
+	hBufferDesc.ByteWidth = static_cast<UINT>(elementCount * elementSize);
+	hBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	hBufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+	hBufferDesc.CPUAccessFlags = 0;
+	hBufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	hBufferDesc.StructureByteStride = static_cast<UINT>(elementSize);
+
+	D3D11_SUBRESOURCE_DATA hSubResourceData;
+	hSubResourceData.pSysMem = initialData;
+	hSubResourceData.SysMemPitch = 0;
+	hSubResourceData.SysMemSlicePitch = 0;
+
+	ID3D11Buffer* buffer;
+	if (FAILED(graphics_device_->GetDevice()->CreateBuffer(&hBufferDesc, initialData != nullptr ? &hSubResourceData : nullptr, &buffer)))
+	{
+		return false;
+	}
+	buffer_ = Effekseer::CreateUniqueReference(buffer);
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+	srvDesc.Buffer.NumElements = static_cast<UINT>(elementCount);
+
+	ID3D11ShaderResourceView* srv = nullptr;
+	if (FAILED(graphics_device_->GetDevice()->CreateShaderResourceView(buffer, &srvDesc, &srv)))
+	{
+		return false;
+	}
+	srv_ = Effekseer::CreateUniqueReference(srv);
+
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+	uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+	uavDesc.Buffer.FirstElement = 0;
+	uavDesc.Buffer.NumElements = static_cast<UINT>(elementCount);
+	uavDesc.Buffer.Flags = 0;
+
+	ID3D11UnorderedAccessView* uav = nullptr;
+	if (FAILED(graphics_device_->GetDevice()->CreateUnorderedAccessView(buffer, &uavDesc, &uav)))
+	{
+		return false;
+	}
+	uav_ = Effekseer::CreateUniqueReference(uav);
+
+	return true;
+}
+
+void StorageBuffer::UpdateData(const void* src, int32_t size, int32_t offset)
+{
+	D3D11_BOX dstBox{};
+	dstBox.left = static_cast<UINT>(offset);
+	dstBox.right = static_cast<UINT>(offset + size);
+	dstBox.bottom = 1;
+	dstBox.back = 1;
+	graphics_device_->GetContext()->UpdateSubresource(buffer_.get(), 0, &dstBox, src, 0, 0);
 }
 
 Texture::Texture(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
-	graphicsDevice_->Register(this);
+	ES_SAFE_ADDREF(graphics_device_);
+	graphics_device_->Register(this);
 }
 
 Texture::~Texture()
 {
-	graphicsDevice_->Unregister(this);
-	ES_SAFE_RELEASE(graphicsDevice_);
+	graphics_device_->Unregister(this);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effekseer::CustomVector<uint8_t>& initialData)
@@ -506,18 +598,20 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		return false;
 	}
 
-	auto device = graphicsDevice_->GetDevice();
+	auto device = graphics_device_->GetDevice();
 	assert(device != nullptr);
 
-	auto context = graphicsDevice_->GetContext();
+	auto context = graphics_device_->GetContext();
 	assert(context != nullptr);
 
 	auto isCompressed = param.Format == Effekseer::Backend::TextureFormatType::BC1 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC2 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC3 ||
+						param.Format == Effekseer::Backend::TextureFormatType::BC7 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC1_SRGB ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC2_SRGB ||
-						param.Format == Effekseer::Backend::TextureFormatType::BC3_SRGB;
+						param.Format == Effekseer::Backend::TextureFormatType::BC3_SRGB ||
+						param.Format == Effekseer::Backend::TextureFormatType::BC7_SRGB;
 
 	int32_t sizePerWidth = 0;
 	int32_t height = 0;
@@ -539,9 +633,17 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		return false;
 	}
 
+	const int32_t baseTextureSize = GetTextureDataSize(
+		param.Format,
+		param.Size[0],
+		param.Size[1],
+		param.Dimension == 2 ? Effekseer::Max(1, param.Size[2]) : param.Size[2]);
+	const bool hasProvidedMipData = param.MipLevelCount > 1 && initialData.size() > static_cast<size_t>(baseTextureSize);
+	const bool shouldGenerateMips = param.MipLevelCount < 1 || (param.MipLevelCount > 1 && !hasProvidedMipData);
+
 	UINT bindFlag = D3D11_BIND_SHADER_RESOURCE;
 
-	if (param.MipLevelCount < 1 || (param.Usage & Effekseer::Backend::TextureUsageType::RenderTarget) != Effekseer::Backend::TextureUsageType::None)
+	if (shouldGenerateMips || (param.Usage & Effekseer::Backend::TextureUsageType::RenderTarget) != Effekseer::Backend::TextureUsageType::None)
 	{
 		bindFlag = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 	}
@@ -563,7 +665,7 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		texDesc.BindFlags = bindFlag;
 		texDesc.CPUAccessFlags = 0;
 
-		if (param.MipLevelCount != 1)
+		if (shouldGenerateMips)
 		{
 			texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		}
@@ -579,16 +681,42 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 
 		if (hasInitData)
 		{
-			data.resize(texDesc.ArraySize);
-			for (int i = 0; i < texDesc.ArraySize; i++)
+			if (hasProvidedMipData)
 			{
-				data[i].pSysMem = initialData.data() + (sizePerWidth * height * i);
-				data[i].SysMemPitch = sizePerWidth;
-				data[i].SysMemSlicePitch = sizePerWidth * height;
+				const int32_t mipLevelCount = Effekseer::Max(1, param.MipLevelCount);
+				data.resize(texDesc.ArraySize * mipLevelCount);
+				size_t offset = 0;
+				for (int arrayIndex = 0; arrayIndex < static_cast<int>(texDesc.ArraySize); arrayIndex++)
+				{
+					for (int mipLevel = 0; mipLevel < mipLevelCount; mipLevel++)
+					{
+						const int32_t mipWidth = Effekseer::Max(param.Size[0] >> mipLevel, 1);
+						const int32_t mipHeight = Effekseer::Max(param.Size[1] >> mipLevel, 1);
+						int32_t mipSizePerWidth = 0;
+						int32_t mipHeightCount = 0;
+						EffekseerRenderer::CalculateAlignedTextureInformation(param.Format, {mipWidth, mipHeight}, mipSizePerWidth, mipHeightCount);
+
+						const auto subresourceIndex = mipLevel + arrayIndex * mipLevelCount;
+						data[subresourceIndex].pSysMem = initialData.data() + offset;
+						data[subresourceIndex].SysMemPitch = mipSizePerWidth;
+						data[subresourceIndex].SysMemSlicePitch = mipSizePerWidth * mipHeightCount;
+						offset += static_cast<size_t>(mipSizePerWidth) * mipHeightCount;
+					}
+				}
+			}
+			else
+			{
+				data.resize(texDesc.ArraySize);
+				for (int i = 0; i < texDesc.ArraySize; i++)
+				{
+					data[i].pSysMem = initialData.data() + (sizePerWidth * height * i);
+					data[i].SysMemPitch = sizePerWidth;
+					data[i].SysMemSlicePitch = sizePerWidth * height;
+				}
 			}
 		}
 
-		HRESULT hr = device->CreateTexture2D(&texDesc, hasInitData && param.MipLevelCount == 1 ? data.data() : nullptr, &texture);
+		HRESULT hr = device->CreateTexture2D(&texDesc, hasInitData && !shouldGenerateMips ? data.data() : nullptr, &texture);
 
 		if (FAILED(hr))
 		{
@@ -622,7 +750,7 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		}
 
 		// Generate mipmap
-		if (param.MipLevelCount != 1)
+		if (shouldGenerateMips)
 		{
 			if (hasInitData)
 			{
@@ -656,7 +784,7 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		texDesc.BindFlags = bindFlag;
 		texDesc.CPUAccessFlags = 0;
 
-		if (param.MipLevelCount != 1)
+		if (shouldGenerateMips)
 		{
 			texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		}
@@ -666,18 +794,42 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		}
 
 		ID3D11Texture3D* texture = nullptr;
-		D3D11_SUBRESOURCE_DATA data = {};
+		std::vector<D3D11_SUBRESOURCE_DATA> data;
 
 		bool hasInitiData = initialData.size() > 0;
 
 		if (hasInitiData)
 		{
-			data.pSysMem = initialData.data();
-			data.SysMemPitch = sizePerWidth;
-			data.SysMemSlicePitch = sizePerWidth * height;
+			if (hasProvidedMipData)
+			{
+				const int32_t mipLevelCount = Effekseer::Max(1, param.MipLevelCount);
+				data.resize(mipLevelCount);
+				size_t offset = 0;
+				for (int mipLevel = 0; mipLevel < mipLevelCount; mipLevel++)
+				{
+					const int32_t mipWidth = Effekseer::Max(param.Size[0] >> mipLevel, 1);
+					const int32_t mipHeight = Effekseer::Max(param.Size[1] >> mipLevel, 1);
+					const int32_t mipDepth = Effekseer::Max(param.Size[2] >> mipLevel, 1);
+					int32_t mipSizePerWidth = 0;
+					int32_t mipHeightCount = 0;
+					EffekseerRenderer::CalculateAlignedTextureInformation(param.Format, {mipWidth, mipHeight}, mipSizePerWidth, mipHeightCount);
+
+					data[mipLevel].pSysMem = initialData.data() + offset;
+					data[mipLevel].SysMemPitch = mipSizePerWidth;
+					data[mipLevel].SysMemSlicePitch = mipSizePerWidth * mipHeightCount;
+					offset += static_cast<size_t>(mipSizePerWidth) * mipHeightCount * mipDepth;
+				}
+			}
+			else
+			{
+				data.resize(1);
+				data[0].pSysMem = initialData.data();
+				data[0].SysMemPitch = sizePerWidth;
+				data[0].SysMemSlicePitch = sizePerWidth * height;
+			}
 		}
 
-		HRESULT hr = device->CreateTexture3D(&texDesc, hasInitiData && param.MipLevelCount == 1 ? &data : nullptr, &texture);
+		HRESULT hr = device->CreateTexture3D(&texDesc, hasInitiData && !shouldGenerateMips ? data.data() : nullptr, &texture);
 
 		if (FAILED(hr))
 		{
@@ -699,11 +851,11 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		}
 
 		// Generate mipmap
-		if (param.MipLevelCount != 1)
+		if (shouldGenerateMips)
 		{
 			if (hasInitiData)
 			{
-				context->UpdateSubresource(texture, 0, 0, data.pSysMem, data.SysMemPitch, data.SysMemSlicePitch);
+				context->UpdateSubresource(texture, 0, 0, data[0].pSysMem, data[0].SysMemPitch, data[0].SysMemSlicePitch);
 			}
 			context->GenerateMips(srv);
 		}
@@ -743,7 +895,7 @@ bool Texture::Init(const Effekseer::Backend::RenderTextureParameter& param)
 
 bool Texture::Init(const Effekseer::Backend::DepthTextureParameter& param)
 {
-	auto device = graphicsDevice_->GetDevice();
+	auto device = graphics_device_->GetDevice();
 	assert(device != nullptr);
 
 	DXGI_FORMAT format = DXGI_FORMAT_R24G8_TYPELESS;
@@ -895,14 +1047,14 @@ bool VertexLayout::Init(const Effekseer::Backend::VertexLayoutElement* elements,
 }
 
 RenderPass::RenderPass(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
+	ES_SAFE_ADDREF(graphics_device_);
 }
 
 RenderPass::~RenderPass()
 {
-	ES_SAFE_RELEASE(graphicsDevice_);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool RenderPass::Init(Effekseer::FixedSizeVector<Effekseer::Backend::TextureRef, Effekseer::Backend::RenderTargetMax>& textures, Effekseer::Backend::TextureRef depthTexture)
@@ -914,14 +1066,14 @@ bool RenderPass::Init(Effekseer::FixedSizeVector<Effekseer::Backend::TextureRef,
 }
 
 Shader::Shader(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
+	ES_SAFE_ADDREF(graphics_device_);
 }
 
 Shader::~Shader()
 {
-	ES_SAFE_RELEASE(graphicsDevice_);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool Shader::Init(const void* vertexShaderData, int32_t vertexShaderDataSize, const void* pixelShaderData, int32_t pixelShaderDataSize)
@@ -930,14 +1082,14 @@ bool Shader::Init(const void* vertexShaderData, int32_t vertexShaderDataSize, co
 	ID3D11VertexShader* vs = nullptr;
 	ID3D11PixelShader* ps = nullptr;
 
-	hr = graphicsDevice_->GetDevice()->CreateVertexShader(vertexShaderData, vertexShaderDataSize, nullptr, &vs);
+	hr = graphics_device_->GetDevice()->CreateVertexShader(vertexShaderData, vertexShaderDataSize, nullptr, &vs);
 
 	if (FAILED(hr))
 	{
 		return false;
 	}
 
-	hr = graphicsDevice_->GetDevice()->CreatePixelShader(pixelShaderData, pixelShaderDataSize, nullptr, &ps);
+	hr = graphics_device_->GetDevice()->CreatePixelShader(pixelShaderData, pixelShaderDataSize, nullptr, &ps);
 
 	if (FAILED(hr))
 	{
@@ -949,19 +1101,30 @@ bool Shader::Init(const void* vertexShaderData, int32_t vertexShaderDataSize, co
 	ps_ = Effekseer::CreateUniqueReference(ps);
 
 	auto start = reinterpret_cast<const uint8_t*>(vertexShaderData);
-	vsData_.assign(start, start + vertexShaderDataSize);
+	vs_data_.assign(start, start + vertexShaderDataSize);
+	return true;
+}
+
+bool Shader::InitAsCompute(const void* computeShaderData, int32_t computeShaderDataSize)
+{
+	ID3D11ComputeShader* cs = nullptr;
+	if (FAILED(graphics_device_->GetDevice()->CreateComputeShader(computeShaderData, computeShaderDataSize, nullptr, &cs)))
+	{
+		return false;
+	}
+	cs_ = Effekseer::CreateUniqueReference(cs);
 	return true;
 }
 
 PipelineState::PipelineState(GraphicsDevice* graphicsDevice)
-	: graphicsDevice_(graphicsDevice)
+	: graphics_device_(graphicsDevice)
 {
-	ES_SAFE_ADDREF(graphicsDevice_);
+	ES_SAFE_ADDREF(graphics_device_);
 }
 
 PipelineState ::~PipelineState()
 {
-	ES_SAFE_RELEASE(graphicsDevice_);
+	ES_SAFE_RELEASE(graphics_device_);
 }
 
 bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param)
@@ -972,6 +1135,12 @@ bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param
 	}
 
 	auto shader = static_cast<Shader*>(param.ShaderPtr.Get());
+	if (shader->GetComputeShader() != nullptr)
+	{
+		param_ = param;
+		return true;
+	}
+
 	auto vertexLayout = param.VertexLayoutPtr.DownCast<VertexLayout>();
 
 	D3D11_RASTERIZER_DESC rsDesc;
@@ -990,7 +1159,7 @@ bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param
 	rsDesc.DepthClipEnable = TRUE;
 	rsDesc.MultisampleEnable = param.IsMSAAEnabled ? TRUE : FALSE;
 	rsDesc.FrontCounterClockwise = FALSE;
-	graphicsDevice_->GetDevice()->CreateRasterizerState(&rsDesc, &rasterizerState);
+	graphics_device_->GetDevice()->CreateRasterizerState(&rsDesc, &rasterizerState);
 
 	std::array<D3D11_COMPARISON_FUNC, 8> compares;
 	compares[static_cast<int32_t>(Effekseer::Backend::CompareFuncType::Never)] = D3D11_COMPARISON_NEVER;
@@ -1002,7 +1171,7 @@ bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param
 	compares[static_cast<int32_t>(Effekseer::Backend::CompareFuncType::GreaterEqual)] = D3D11_COMPARISON_GREATER_EQUAL;
 	compares[static_cast<int32_t>(Effekseer::Backend::CompareFuncType::Always)] = D3D11_COMPARISON_ALWAYS;
 
-	rasterizerState_ = Effekseer::CreateUniqueReference(rasterizerState);
+	rasterizer_state_ = Effekseer::CreateUniqueReference(rasterizerState);
 
 	ID3D11DepthStencilState* depthStencilState = nullptr;
 
@@ -1012,9 +1181,9 @@ bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param
 	dsDesc.DepthWriteMask = param.IsDepthWriteEnabled ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
 	dsDesc.DepthFunc = compares[static_cast<int32_t>(param.DepthFunc)];
 	dsDesc.StencilEnable = FALSE;
-	graphicsDevice_->GetDevice()->CreateDepthStencilState(&dsDesc, &depthStencilState);
+	graphics_device_->GetDevice()->CreateDepthStencilState(&dsDesc, &depthStencilState);
 
-	depthStencilState_ = Effekseer::CreateUniqueReference(depthStencilState);
+	depth_stencil_state_ = Effekseer::CreateUniqueReference(depthStencilState);
 
 	D3D11_BLEND_DESC blendDesc;
 	ZeroMemory(&blendDesc, sizeof(blendDesc));
@@ -1055,17 +1224,17 @@ bool PipelineState::Init(const Effekseer::Backend::PipelineStateParameter& param
 
 	ID3D11BlendState* blendState = nullptr;
 
-	graphicsDevice_->GetDevice()->CreateBlendState(&blendDesc, &blendState);
+	graphics_device_->GetDevice()->CreateBlendState(&blendDesc, &blendState);
 
-	blendState_ = Effekseer::CreateUniqueReference(blendState);
+	blend_state_ = Effekseer::CreateUniqueReference(blendState);
 
 	if (vertexLayout->GetElements().size() >= LayoutElementMax)
 	{
 		return false;
 	}
 
-	inputLayout_ = CreateInputLayout(*graphicsDevice_, vertexLayout, shader->GetVertexShaderData().data(), shader->GetVertexShaderData().size());
-	if (inputLayout_ == nullptr)
+	input_layout_ = CreateInputLayout(*graphics_device_, vertexLayout, shader->GetVertexShaderData().data(), shader->GetVertexShaderData().size());
+	if (input_layout_ == nullptr)
 	{
 		return false;
 	}
@@ -1279,6 +1448,20 @@ Effekseer::Backend::UniformBufferRef GraphicsDevice::CreateUniformBuffer(int32_t
 	return ret;
 }
 
+Effekseer::Backend::StorageBufferRef GraphicsDevice::CreateStorageBuffer(int32_t elementCount, int32_t elementSize, const void* initialData, Effekseer::Backend::StorageBufferUsage usage)
+{
+	(void)usage;
+
+	auto ret = Effekseer::MakeRefPtr<StorageBuffer>(this);
+
+	if (!ret->Init(elementCount, elementSize, initialData))
+	{
+		return nullptr;
+	}
+
+	return ret;
+}
+
 Effekseer::Backend::VertexLayoutRef GraphicsDevice::CreateVertexLayout(const Effekseer::Backend::VertexLayoutElement* elements, int32_t elementCount)
 {
 	auto ret = Effekseer::MakeRefPtr<VertexLayout>();
@@ -1347,6 +1530,18 @@ Effekseer::Backend::ShaderRef GraphicsDevice::CreateShaderFromCodes(const Effeks
 	return nullptr;
 }
 
+Effekseer::Backend::ShaderRef GraphicsDevice::CreateComputeShader(const void* csData, int32_t csDataSize)
+{
+	auto ret = Effekseer::MakeRefPtr<Shader>(this);
+
+	if (!ret->InitAsCompute(csData, csDataSize))
+	{
+		return nullptr;
+	}
+
+	return ret;
+}
+
 Effekseer::Backend::PipelineStateRef GraphicsDevice::CreatePipelineState(const Effekseer::Backend::PipelineStateParameter& param)
 {
 	auto ret = Effekseer::MakeRefPtr<PipelineState>(this);
@@ -1373,6 +1568,9 @@ void GraphicsDevice::SetViewport(int32_t x, int32_t y, int32_t width, int32_t he
 
 void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 {
+	constexpr int32_t BufferSlotCount = Effekseer::Backend::DrawParameter::BufferSlotCount;
+	constexpr int32_t ResourceSlotCount = Effekseer::Backend::DrawParameter::ResourceSlotCount;
+
 	if (drawParam.VertexBufferPtr == nullptr ||
 		drawParam.IndexBufferPtr == nullptr ||
 		drawParam.PipelineStatePtr == nullptr)
@@ -1383,8 +1581,6 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 	auto vb = static_cast<VertexBuffer*>(drawParam.VertexBufferPtr.Get());
 	auto ib = static_cast<IndexBuffer*>(drawParam.IndexBufferPtr.Get());
 	auto pip = static_cast<PipelineState*>(drawParam.PipelineStatePtr.Get());
-	auto vub = static_cast<UniformBuffer*>(drawParam.VertexUniformBufferPtr.Get());
-	auto pub = static_cast<UniformBuffer*>(drawParam.PixelUniformBufferPtr.Get());
 	auto shader = static_cast<Shader*>(pip->GetParam().ShaderPtr.Get());
 	auto vertexLayout = static_cast<VertexLayout*>(pip->GetParam().VertexLayoutPtr.Get());
 
@@ -1396,7 +1592,7 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 			vertexSize += Effekseer::Backend::GetVertexLayoutFormatSize(element.Format);
 		}
 
-		std::array<ID3D11Buffer*, 1> vbs;
+		std::array<ID3D11Buffer*, 1> vbs{};
 		vbs[0] = vb->GetBuffer();
 		uint32_t offset = 0;
 
@@ -1411,25 +1607,37 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 		context_->IASetIndexBuffer(ib->GetBuffer(), formats[static_cast<int32_t>(ib->GetStrideType())], 0);
 	}
 
-	if (vub != nullptr)
+	// Constant buffers (VS)
+	std::array<ID3D11Buffer*, BufferSlotCount> vubs{};
+	for (int32_t i = 0; i < BufferSlotCount; i++)
 	{
-		vub->UpdateDataActually();
-		auto cb = vub->GetBuffer();
-		context_->VSSetConstantBuffers(0, 1, &cb);
+		if (auto vub = static_cast<UniformBuffer*>(drawParam.VertexUniformBufferPtrs[i].Get()))
+		{
+			vub->UpdateDataActually();
+			vubs[i] = vub->GetBuffer();
+		}
 	}
+	context_->VSSetConstantBuffers(0, BufferSlotCount, vubs.data());
 
-	if (pub != nullptr)
+	// Constant buffers (PS)
+	std::array<ID3D11Buffer*, BufferSlotCount> pubs{};
+	for (int32_t i = 0; i < BufferSlotCount; i++)
 	{
-		pub->UpdateDataActually();
-		auto cb = pub->GetBuffer();
-		context_->PSSetConstantBuffers(0, 1, &cb);
+		if (auto pub = static_cast<UniformBuffer*>(drawParam.PixelUniformBufferPtrs[i].Get()))
+		{
+			pub->UpdateDataActually();
+			pubs[i] = pub->GetBuffer();
+		}
 	}
+	context_->PSSetConstantBuffers(0, BufferSlotCount, pubs.data());
 
+	// Vertex/Pixel shader
 	{
 		context_->VSSetShader(shader->GetVertexShader(), nullptr, 0);
 		context_->PSSetShader(shader->GetPixelShader(), nullptr, 0);
 	}
 
+	// Render State
 	{
 		context_->OMSetDepthStencilState(pip->GetDepthStencilState(), 0);
 		context_->RSSetState(pip->GetRasterizerState());
@@ -1437,44 +1645,34 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 		context_->OMSetBlendState(pip->GetBlendState(), blendFactor, 0xFFFFFFFF);
 	}
 
-	for (int32_t i = 0; i < drawParam.TextureCount; i++)
+	// Shader Resources
+	std::array<ID3D11SamplerState*, ResourceSlotCount> samplers{};
+	std::array<ID3D11ShaderResourceView*, ResourceSlotCount> srvs{};
+	for (int32_t slot = 0; slot < (int32_t)ResourceSlotCount; slot++)
 	{
-		auto texture = static_cast<Texture*>(drawParam.TexturePtrs[i].Get());
-		if (texture != nullptr)
+		auto& binder = drawParam.ResourceBinders[slot];
+		if (auto textureBinder = std::get_if<Effekseer::Backend::TextureBinder>(&binder))
 		{
-			ID3D11SamplerState* samplerTbl[] = {samplers_[static_cast<int>(drawParam.TextureSamplingTypes[i])][static_cast<int>(drawParam.TextureWrapTypes[i])].get()};
-			context_->VSSetSamplers(i, 1, samplerTbl);
-			context_->PSSetSamplers(i, 1, samplerTbl);
-
-			auto srv = texture->GetSRV();
-			GetContext()->VSSetShaderResources(i, 1, &srv);
-			GetContext()->PSSetShaderResources(i, 1, &srv);
+			auto texture = textureBinder->Texture.DownCast<Backend::Texture>();
+			srvs[slot] = texture->GetSRV();
+			samplers[slot] = samplers_[static_cast<int>(textureBinder->SamplingType)][static_cast<int>(textureBinder->WrapType)].get();
 		}
-		else
+		else if (auto storageBufferBinder = std::get_if<Effekseer::Backend::StorageBufferBinder>(&binder))
 		{
-			ID3D11SamplerState* samplerTbl[] = {nullptr};
-			ID3D11ShaderResourceView* srvTbl[] = {nullptr};
-
-			GetContext()->VSSetSamplers(i, 1, samplerTbl);
-			GetContext()->PSSetSamplers(i, 1, samplerTbl);
-			GetContext()->VSSetShaderResources(i, 1, srvTbl);
-			GetContext()->PSSetShaderResources(i, 1, srvTbl);
+			auto storageBuffer = storageBufferBinder->StorageBuffer.DownCast<Backend::StorageBuffer>();
+			if (storageBuffer != nullptr && storageBufferBinder->Access == Effekseer::Backend::StorageBufferAccess::ReadOnly)
+			{
+				srvs[slot] = storageBuffer->GetSRV();
+			}
 		}
 	}
 
-	for (int32_t i = drawParam.TextureCount; i < Effekseer::Backend::DrawParameter::TextureSlotCount; i++)
-	{
-		ID3D11SamplerState* samplerTbl[] = {nullptr};
-		ID3D11ShaderResourceView* srvTbl[] = {nullptr};
-
-		GetContext()->VSSetSamplers(i, 1, samplerTbl);
-		GetContext()->PSSetSamplers(i, 1, samplerTbl);
-		GetContext()->VSSetShaderResources(i, 1, srvTbl);
-		GetContext()->PSSetShaderResources(i, 1, srvTbl);
-	}
+	GetContext()->VSSetShaderResources(0, ResourceSlotCount, srvs.data());
+	GetContext()->PSSetShaderResources(0, ResourceSlotCount, srvs.data());
+	GetContext()->VSSetSamplers(0, ResourceSlotCount, samplers.data());
+	GetContext()->PSSetSamplers(0, ResourceSlotCount, samplers.data());
 
 	// topology
-
 	int32_t indexPerPrimitive{};
 
 	if (pip->GetParam().Topology == Effekseer::Backend::TopologyType::Point)
@@ -1560,6 +1758,65 @@ void GraphicsDevice::EndRenderPass()
 {
 }
 
+void GraphicsDevice::Dispatch(const Effekseer::Backend::DispatchParameter& dispatchParam)
+{
+	constexpr int32_t BufferSlotCount = Effekseer::Backend::DispatchParameter::BufferSlotCount;
+	constexpr int32_t ResourceSlotCount = Effekseer::Backend::DispatchParameter::ResourceSlotCount;
+	constexpr int32_t UAVSlotCount = 8;
+
+	auto pipline = dispatchParam.PipelineStatePtr.DownCast<PipelineState>();
+	auto shader = pipline->GetParam().ShaderPtr.DownCast<Shader>();
+
+	std::array<ID3D11Buffer*, BufferSlotCount> csCBufs = {};
+	std::array<ID3D11UnorderedAccessView*, UAVSlotCount> csUAVs = {};
+	std::array<ID3D11ShaderResourceView*, ResourceSlotCount> csSRVs = {};
+	std::array<ID3D11SamplerState*, ResourceSlotCount> csSamplers = {};
+
+	for (int32_t i = 0; i < BufferSlotCount; i++)
+	{
+		if (auto uniformBuffer = dispatchParam.UniformBufferPtrs[i].DownCast<UniformBuffer>())
+		{
+			uniformBuffer->UpdateDataActually();
+			csCBufs[i] = uniformBuffer->GetBuffer();
+		}
+	}
+
+	for (int32_t slot = 0; slot < (int32_t)ResourceSlotCount; slot++)
+	{
+		auto& binder = dispatchParam.ResourceBinders[slot];
+		if (auto textureBinder = std::get_if<Effekseer::Backend::TextureBinder>(&binder))
+		{
+			auto texture = textureBinder->Texture.DownCast<Backend::Texture>();
+			csSRVs[slot] = texture->GetSRV();
+			csSamplers[slot] = samplers_[static_cast<int>(textureBinder->SamplingType)][static_cast<int>(textureBinder->WrapType)].get();
+		}
+		else if (auto storageBufferBinder = std::get_if<Effekseer::Backend::StorageBufferBinder>(&binder))
+		{
+			auto storageBuffer = storageBufferBinder->StorageBuffer.DownCast<Backend::StorageBuffer>();
+			if (storageBuffer != nullptr && storageBufferBinder->Access == Effekseer::Backend::StorageBufferAccess::ReadOnly)
+			{
+				csSRVs[slot] = storageBuffer->GetSRV();
+			}
+			else if (storageBuffer != nullptr && slot < (int32_t)csUAVs.size())
+			{
+				csUAVs[slot] = storageBuffer->GetUAV();
+			}
+		}
+	}
+
+	context_->CSSetShader(shader->GetComputeShader(), nullptr, 0);
+	context_->CSSetConstantBuffers(0, (UINT)csCBufs.size(), csCBufs.data());
+	context_->CSSetShaderResources(0, (UINT)csSRVs.size(), csSRVs.data());
+	context_->CSSetSamplers(0, (UINT)csSamplers.size(), csSamplers.data());
+	context_->CSSetUnorderedAccessViews(0, (UINT)csUAVs.size(), csUAVs.data(), nullptr);
+
+	auto gc = dispatchParam.GroupCount;
+	context_->Dispatch(std::min(gc[0], 65536), std::min(gc[1], 65536), std::min(gc[2], 65536));
+
+	std::array<ID3D11UnorderedAccessView*, UAVSlotCount> csClearUAVs = {};
+	context_->CSSetUnorderedAccessViews(0, (UINT)csClearUAVs.size(), csClearUAVs.data(), nullptr);
+}
+
 bool GraphicsDevice::UpdateUniformBuffer(Effekseer::Backend::UniformBufferRef& buffer, int32_t size, int32_t offset, const void* data)
 {
 	if (buffer == nullptr)
@@ -1568,6 +1825,20 @@ bool GraphicsDevice::UpdateUniformBuffer(Effekseer::Backend::UniformBufferRef& b
 	}
 
 	auto b = static_cast<UniformBuffer*>(buffer.Get());
+
+	b->UpdateData(data, size, offset);
+
+	return true;
+}
+
+bool GraphicsDevice::UpdateStorageBuffer(Effekseer::Backend::StorageBufferRef& buffer, int32_t size, int32_t offset, const void* data)
+{
+	if (buffer == nullptr)
+	{
+		return false;
+	}
+
+	auto b = static_cast<StorageBuffer*>(buffer.Get());
 
 	b->UpdateData(data, size, offset);
 

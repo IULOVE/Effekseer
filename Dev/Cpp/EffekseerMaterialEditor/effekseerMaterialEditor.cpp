@@ -4,6 +4,10 @@
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "gdiplus.lib")
 
+#define IMGUI_DEFINE_MATH_OPERATORS 1
+
+#include "efkMat.Editor.h"
+
 #include "Config.h"
 #include "Dialog/Dialog.h"
 #include "Graphics/efkMat.Graphics.h"
@@ -11,7 +15,6 @@
 #include "../IPC/IPC.h"
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
@@ -19,8 +22,6 @@
 #include <efkMat.Models.h>
 #include <efkMat.Parameters.h>
 #include <efkMat.TextExporter.h>
-
-#include "efkMat.Editor.h"
 
 #include <efkMat.CommandManager.h>
 #include <efkMat.StringContainer.h>
@@ -37,8 +38,10 @@
 #include <spdlog/spdlog.h>
 
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 #ifdef WIN32
 #include <direct.h>
@@ -60,9 +63,6 @@ std::shared_ptr<EffekseerMaterial::Node> g_selectedNode;
 
 bool g_showDebugWindow = false;
 
-std::array<bool, 512> keyState;
-std::array<bool, 512> keyStatePre;
-
 class IOCallback : public Effekseer::IOCallback
 {
 public:
@@ -75,44 +75,67 @@ public:
 
 std::string GetDirectoryName(const std::string& path)
 {
-	const std::string::size_type pos = std::max<int32_t>(path.find_last_of('/'), path.find_last_of('\\'));
+	const std::string::size_type pos = path.find_last_of("/\\");
 	return (pos == std::string::npos) ? std::string() : path.substr(0, pos + 1);
 }
 
 std::string GetExecutingDirectory()
 {
-	char buf[260];
-
 #ifdef _WIN32
-	int len = GetModuleFileNameA(nullptr, buf, 260);
-	if (len <= 0)
-		return "";
-#elif defined(__APPLE__)
-	uint32_t size = 260;
-	if (_NSGetExecutablePath(buf, &size) != 0)
+	std::vector<char> buffer(1024);
+	for (;;)
 	{
-		buf[0] = 0;
+		const auto len = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+		if (len == 0)
+			return {};
+		if (len < buffer.size() - 1)
+			return GetDirectoryName(buffer.data());
+		buffer.resize(buffer.size() * 2);
 	}
+#elif defined(__APPLE__)
+	std::vector<char> buffer(1024);
+	uint32_t size = static_cast<uint32_t>(buffer.size());
+	if (_NSGetExecutablePath(buffer.data(), &size) != 0)
+	{
+		buffer.resize(size);
+		if (_NSGetExecutablePath(buffer.data(), &size) != 0)
+			return {};
+	}
+	return GetDirectoryName(buffer.data());
 #else
-
 	char temp[32];
 	sprintf(temp, "/proc/%d/exe", getpid());
-	int bytes = std::min((int)readlink(temp, buf, 260), 260 - 1);
-	if (bytes >= 0)
-		buf[bytes] = '\0';
+	std::vector<char> buffer(1024);
+	for (;;)
+	{
+		const auto bytes = readlink(temp, buffer.data(), buffer.size() - 1);
+		if (bytes < 0)
+			return {};
+		if (static_cast<size_t>(bytes) < buffer.size() - 1)
+		{
+			buffer[bytes] = '\0';
+			return GetDirectoryName(buffer.data());
+		}
+		buffer.resize(buffer.size() * 2);
+	}
 #endif
-
-	return GetDirectoryName(buf);
 }
 
 void SetCurrentDir(const char* path)
 {
 #ifdef _WIN32
-	_chdir(path);
+	const auto result = _chdir(path);
 #else
-	chdir(path);
+	const auto result = chdir(path);
 #endif
-	spdlog::info("SetCurrentDir : {}", path);
+	if (result == 0)
+	{
+		spdlog::info("SetCurrentDir : {}", path);
+	}
+	else
+	{
+		spdlog::error("Failed to set current directory : {}", path);
+	}
 }
 
 std::vector<std::shared_ptr<EffekseerMaterial::Dialog>> newDialogs;
@@ -199,22 +222,35 @@ void ChangeLanguage(const std::string& key)
 int mainLoop(int argc, char* argv[])
 {
 	bool ipcMode = false;
-
-	if (argc >= 2 && std::string(argv[1]) == "ipc")
-	{
-		ipcMode = true;
-	}
-
 	std::string languageKey;
+	std::string startupMaterialPath;
 
 	if (argc >= 2)
 	{
 		for (int i = 1; i < argc; i++)
 		{
-			if (std::string(argv[i - 1]) == "--language" || std::string(argv[i - 1]) == "-l")
+			const auto arg = std::string(argv[i]);
+
+			if (i == 1 && arg == "ipc")
 			{
-				languageKey = argv[i];
-				break;
+				ipcMode = true;
+				continue;
+			}
+
+			if (arg == "--language" || arg == "-l")
+			{
+				if (i + 1 < argc)
+				{
+					languageKey = argv[++i];
+				}
+				continue;
+			}
+
+			if (startupMaterialPath.empty() && !arg.empty() && arg[0] != '-')
+			{
+				std::error_code ec;
+				const auto path = std::filesystem::absolute(std::filesystem::u8path(arg), ec);
+				startupMaterialPath = ec ? arg : path.u8string();
 			}
 		}
 	}
@@ -333,8 +369,10 @@ int mainLoop(int argc, char* argv[])
 
 	g_editor = std::make_shared<EffekseerMaterial::Editor>(graphics);
 
-	keyStatePre.fill(false);
-	keyState.fill(false);
+	if (!startupMaterialPath.empty())
+	{
+		g_editor->LoadOrSelect(startupMaterialPath.c_str());
+	}
 
 	bool isFirstFrame = true;
 	int framecount = 0;
@@ -375,7 +413,7 @@ int mainLoop(int argc, char* argv[])
 
 		if (isFontUpdated)
 		{
-			ImGui_ImplOpenGL3_DestroyFontsTexture();
+			ImGui_ImplOpenGL3_DestroyDeviceObjects();
 			io.Fonts->Clear();
 
 			Effekseer::Editor::AddFontFromFileTTF(
@@ -436,12 +474,6 @@ int mainLoop(int argc, char* argv[])
 		ImGui::NewFrame();
 
 		{
-			keyState = keyStatePre;
-			for (int i = 0; i < 512; i++)
-			{
-				keyStatePre[i] = ImGui::GetIO().KeysDown[i];
-			}
-
 			if (material != nullptr)
 			{
 				if (!ImGui::IsAnyItemActive())
@@ -677,7 +709,7 @@ int mainLoop(int argc, char* argv[])
 			// HACK because of imgui specification
 			if (framecount == 3)
 			{
-				if (!ipcMode)
+				if (!ipcMode && startupMaterialPath.empty())
 				{
 					auto creatDialog = std::make_shared<EffekseerMaterial::NewOrOpenDialog>(g_editor);
 					// ImGui::OpenPopup(creatDialog->GetID());
@@ -719,15 +751,32 @@ int mainLoop(int argc, char* argv[])
 
 				if (uobj != nullptr)
 				{
+					auto writeCode = [](const std::string& code)
+					{
+						int line = 1;
+						for (size_t index = 0; index < code.size(); line++)
+						{
+							size_t offset = code.find('\n', index);
+							if (offset == code.npos)
+							{
+								offset = code.size() - index;
+							}
+							ImGui::Text("%4d|", line);
+							ImGui::SameLine();
+							ImGui::TextUnformatted(&code[index], &code[offset]);
+							index = offset + 1;
+						}
+					};
+
 					if (ImGui::TreeNode("VS"))
 					{
-						ImGui::Text(uobj->GetPreview()->VS.c_str());
+						writeCode(uobj->GetPreview()->VS);
 						ImGui::TreePop();
 					}
 
 					if (ImGui::TreeNode("PS"))
 					{
-						ImGui::Text(uobj->GetPreview()->PS.c_str());
+						writeCode(uobj->GetPreview()->PS);
 						ImGui::TreePop();
 					}
 				}

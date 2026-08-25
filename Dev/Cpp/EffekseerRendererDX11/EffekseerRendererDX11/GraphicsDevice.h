@@ -20,11 +20,13 @@ using D3D11ResourcePtr = std::unique_ptr<ID3D11Resource, Effekseer::ReferenceDel
 using D3D11Texture2DPtr = std::unique_ptr<ID3D11Texture2D, Effekseer::ReferenceDeleter<ID3D11Texture2D>>;
 using D3D11Texture3DPtr = std::unique_ptr<ID3D11Texture3D, Effekseer::ReferenceDeleter<ID3D11Texture3D>>;
 using D3D11ShaderResourceViewPtr = std::unique_ptr<ID3D11ShaderResourceView, Effekseer::ReferenceDeleter<ID3D11ShaderResourceView>>;
+using D3D11UnorderedAccessViewPtr = std::unique_ptr<ID3D11UnorderedAccessView, Effekseer::ReferenceDeleter<ID3D11UnorderedAccessView>>;
 using D3D11RenderTargetViewPtr = std::unique_ptr<ID3D11RenderTargetView, Effekseer::ReferenceDeleter<ID3D11RenderTargetView>>;
 using D3D11DepthStencilViewPtr = std::unique_ptr<ID3D11DepthStencilView, Effekseer::ReferenceDeleter<ID3D11DepthStencilView>>;
 using D3D11InputLayoutPtr = std::unique_ptr<ID3D11InputLayout, Effekseer::ReferenceDeleter<ID3D11InputLayout>>;
 using D3D11VertexShaderPtr = std::unique_ptr<ID3D11VertexShader, Effekseer::ReferenceDeleter<ID3D11VertexShader>>;
 using D3D11PixelShaderPtr = std::unique_ptr<ID3D11PixelShader, Effekseer::ReferenceDeleter<ID3D11PixelShader>>;
+using D3D11ComputeShaderPtr = std::unique_ptr<ID3D11ComputeShader, Effekseer::ReferenceDeleter<ID3D11ComputeShader>>;
 using D3D11RasterizerStatePtr = std::unique_ptr<ID3D11RasterizerState, Effekseer::ReferenceDeleter<ID3D11RasterizerState>>;
 using D3D11DepthStencilStatePtr = std::unique_ptr<ID3D11DepthStencilState, Effekseer::ReferenceDeleter<ID3D11DepthStencilState>>;
 using D3D11BlendStatePtr = std::unique_ptr<ID3D11BlendState, Effekseer::ReferenceDeleter<ID3D11BlendState>>;
@@ -36,28 +38,32 @@ class VertexBuffer;
 class IndexBuffer;
 class UniformBuffer;
 class Shader;
+class ComputeShader;
 class VertexLayout;
 class FrameBuffer;
 class Texture;
 class RenderPass;
 class PipelineState;
 class UniformLayout;
+class StorageBuffer;
 
 using GraphicsDeviceRef = Effekseer::RefPtr<GraphicsDevice>;
 using VertexBufferRef = Effekseer::RefPtr<VertexBuffer>;
 using IndexBufferRef = Effekseer::RefPtr<IndexBuffer>;
 using UniformBufferRef = Effekseer::RefPtr<UniformBuffer>;
 using ShaderRef = Effekseer::RefPtr<Shader>;
+using ComputeShaderRef = Effekseer::RefPtr<ComputeShader>;
 using VertexLayoutRef = Effekseer::RefPtr<VertexLayout>;
 using FrameBufferRef = Effekseer::RefPtr<FrameBuffer>;
 using TextureRef = Effekseer::RefPtr<Texture>;
 using RenderPassRef = Effekseer::RefPtr<RenderPass>;
 using PipelineStateRef = Effekseer::RefPtr<PipelineState>;
 using UniformLayoutRef = Effekseer::RefPtr<UniformLayout>;
+using StorageBufferRef = Effekseer::RefPtr<StorageBuffer>;
 
 DXGI_FORMAT GetTextureFormatType(Effekseer::Backend::TextureFormatType format);
 
-D3D11InputLayoutPtr CreateInputLayout(GraphicsDevice& graphicsDevice, VertexLayoutRef vertexLayout, const void* vertexBufferData, int32_t vertexBufferSize);
+D3D11InputLayoutPtr CreateInputLayout(GraphicsDevice& graphics_device, VertexLayoutRef vertex_layout, const void* vertex_buffer_data, int32_t vertex_buffer_size);
 
 class DeviceObject
 {
@@ -78,17 +84,17 @@ class VertexBuffer
 private:
 	EffekseerRenderer::DirtiedBlock blocks_;
 
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 	D3D11BufferPtr buffer_ = nullptr;
 	int32_t size_ = 0;
-	bool isDynamic_ = false;
+	bool is_dynamic_ = false;
 
 public:
-	VertexBuffer(GraphicsDevice* graphicsDevice);
+	VertexBuffer(GraphicsDevice* graphics_device);
 
 	~VertexBuffer() override;
 
-	bool Allocate(const void* src, int32_t size, bool isDynamic);
+	bool Allocate(const void* src, int32_t size, bool is_dynamic);
 
 	void Deallocate();
 
@@ -96,7 +102,7 @@ public:
 
 	void OnResetDevice() override;
 
-	bool Init(const void* src, int32_t size, bool isDynamic);
+	bool Init(const void* src, int32_t size, bool is_dynamic);
 
 	void UpdateData(const void* src, int32_t size, int32_t offset);
 
@@ -118,16 +124,16 @@ class IndexBuffer
 private:
 	EffekseerRenderer::DirtiedBlock blocks_;
 
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 	D3D11BufferPtr buffer_ = nullptr;
 	int32_t stride_ = 0;
 
 public:
-	IndexBuffer(GraphicsDevice* graphicsDevice);
+	IndexBuffer(GraphicsDevice* graphics_device);
 
 	~IndexBuffer() override;
 
-	bool Allocate(const void* src, int32_t elementCount, int32_t stride);
+	bool Allocate(const void* src, int32_t element_count, int32_t stride);
 
 	void Deallocate();
 
@@ -135,7 +141,7 @@ public:
 
 	void OnResetDevice() override;
 
-	bool Init(const void* src, int32_t elementCount, int32_t stride);
+	bool Init(const void* src, int32_t element_count, int32_t stride);
 
 	void UpdateData(const void* src, int32_t size, int32_t offset);
 
@@ -150,16 +156,16 @@ class UniformBuffer
 	  public Effekseer::Backend::UniformBuffer
 {
 private:
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 	D3D11BufferPtr buffer_;
 	Effekseer::CustomVector<uint8_t> data_;
-	bool isDirtied_ = false;
+	bool is_dirtied_ = false;
 
 public:
-	UniformBuffer(GraphicsDevice* graphicsDevice);
+	UniformBuffer(GraphicsDevice* graphics_device);
 	~UniformBuffer() override;
 
-	bool Init(int32_t size, const void* initialData);
+	bool Init(int32_t size, const void* initial_data);
 
 	ID3D11Buffer* GetBuffer() const
 	{
@@ -173,6 +179,40 @@ public:
 	bool GetIsDirtied() const;
 };
 
+class StorageBuffer
+	: public DeviceObject,
+	  public Effekseer::Backend::StorageBuffer
+{
+private:
+	GraphicsDevice* graphics_device_ = nullptr;
+	D3D11BufferPtr buffer_;
+	D3D11ShaderResourceViewPtr srv_;
+	D3D11UnorderedAccessViewPtr uav_;
+
+public:
+	StorageBuffer(GraphicsDevice* graphics_device);
+	~StorageBuffer() override;
+
+	bool Init(int32_t element_count, int32_t element_size, const void* initial_data);
+
+	void UpdateData(const void* src, int32_t size, int32_t offset);
+
+	ID3D11Buffer* GetBuffer() const
+	{
+		return buffer_.get();
+	}
+
+	ID3D11ShaderResourceView* GetSRV() const
+	{
+		return srv_.get();
+	}
+
+	ID3D11UnorderedAccessView* GetUAV() const
+	{
+		return uav_.get();
+	}
+};
+
 class Texture
 	: public DeviceObject,
 	  public Effekseer::Backend::Texture
@@ -183,13 +223,13 @@ class Texture
 	D3D11RenderTargetViewPtr rtv_;
 	D3D11DepthStencilViewPtr dsv_;
 
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 
 public:
-	Texture(GraphicsDevice* graphicsDevice);
+	Texture(GraphicsDevice* graphics_device);
 	~Texture() override;
 
-	bool Init(const Effekseer::Backend::TextureParameter& param, const Effekseer::CustomVector<uint8_t>& initialData);
+	bool Init(const Effekseer::Backend::TextureParameter& param, const Effekseer::CustomVector<uint8_t>& initial_data);
 
 	bool Init(const Effekseer::Backend::RenderTextureParameter& param);
 
@@ -239,7 +279,7 @@ public:
 	VertexLayout() = default;
 	~VertexLayout() = default;
 
-	bool Init(const Effekseer::Backend::VertexLayoutElement* elements, int32_t elementCount);
+	bool Init(const Effekseer::Backend::VertexLayoutElement* elements, int32_t element_count);
 
 	const Effekseer::CustomVector<Effekseer::Backend::VertexLayoutElement>& GetElements() const
 	{
@@ -252,12 +292,12 @@ class RenderPass
 	  public Effekseer::Backend::RenderPass
 {
 private:
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 	Effekseer::FixedSizeVector<Effekseer::Backend::TextureRef, Effekseer::Backend::RenderTargetMax> textures_;
 	Effekseer::Backend::TextureRef depthTexture_;
 
 public:
-	RenderPass(GraphicsDevice* graphicsDevice);
+	RenderPass(GraphicsDevice* graphics_device);
 	~RenderPass() override;
 
 	bool Init(Effekseer::FixedSizeVector<Effekseer::Backend::TextureRef, Effekseer::Backend::RenderTargetMax>& textures, Effekseer::Backend::TextureRef depthTexture);
@@ -278,19 +318,21 @@ class Shader
 	  public Effekseer::Backend::Shader
 {
 private:
-	GraphicsDevice* graphicsDevice_ = nullptr;
-	Effekseer::CustomVector<uint8_t> vsData_;
+	GraphicsDevice* graphics_device_ = nullptr;
+	Effekseer::CustomVector<uint8_t> vs_data_;
 	D3D11VertexShaderPtr vs_;
 	D3D11PixelShaderPtr ps_;
+	D3D11ComputeShaderPtr cs_;
 
 public:
-	Shader(GraphicsDevice* graphicsDevice);
+	Shader(GraphicsDevice* graphics_device);
 	~Shader() override;
-	bool Init(const void* vertexShaderData, int32_t vertexShaderDataSize, const void* pixelShaderData, int32_t pixelShaderDataSize);
+	bool Init(const void* vertex_shader_data, int32_t vertex_shader_data_size, const void* pixel_shader_data, int32_t pixel_shader_data_size);
+	bool InitAsCompute(const void* compute_shader_data, int32_t compute_shader_data_size);
 
 	const Effekseer::CustomVector<uint8_t>& GetVertexShaderData() const
 	{
-		return vsData_;
+		return vs_data_;
 	}
 
 	ID3D11VertexShader* GetVertexShader() const
@@ -302,6 +344,11 @@ public:
 	{
 		return ps_.get();
 	}
+
+	ID3D11ComputeShader* GetComputeShader() const
+	{
+		return cs_.get();
+	}
 };
 
 class PipelineState
@@ -311,16 +358,16 @@ class PipelineState
 	static const int32_t LayoutElementMax = 16;
 
 private:
-	GraphicsDevice* graphicsDevice_ = nullptr;
+	GraphicsDevice* graphics_device_ = nullptr;
 	Effekseer::Backend::PipelineStateParameter param_;
 
-	D3D11RasterizerStatePtr rasterizerState_;
-	D3D11DepthStencilStatePtr depthStencilState_;
-	D3D11BlendStatePtr blendState_;
-	D3D11InputLayoutPtr inputLayout_;
+	D3D11RasterizerStatePtr rasterizer_state_;
+	D3D11DepthStencilStatePtr depth_stencil_state_;
+	D3D11BlendStatePtr blend_state_;
+	D3D11InputLayoutPtr input_layout_;
 
 public:
-	PipelineState(GraphicsDevice* graphicsDevice);
+	PipelineState(GraphicsDevice* graphics_device);
 	~PipelineState() override;
 
 	bool Init(const Effekseer::Backend::PipelineStateParameter& param);
@@ -332,22 +379,22 @@ public:
 
 	ID3D11RasterizerState* GetRasterizerState() const
 	{
-		return rasterizerState_.get();
+		return rasterizer_state_.get();
 	}
 
 	ID3D11DepthStencilState* GetDepthStencilState() const
 	{
-		return depthStencilState_.get();
+		return depth_stencil_state_.get();
 	}
 
 	ID3D11BlendState* GetBlendState() const
 	{
-		return blendState_.get();
+		return blend_state_.get();
 	}
 
 	ID3D11InputLayout* GetInputLayout() const
 	{
-		return inputLayout_.get();
+		return input_layout_.get();
 	}
 };
 
@@ -394,6 +441,8 @@ public:
 
 	Effekseer::Backend::UniformBufferRef CreateUniformBuffer(int32_t size, const void* initialData) override;
 
+	Effekseer::Backend::StorageBufferRef CreateStorageBuffer(int32_t elementCount, int32_t elementSize, const void* initialData, Effekseer::Backend::StorageBufferUsage usage) override;
+
 	Effekseer::Backend::VertexLayoutRef CreateVertexLayout(const Effekseer::Backend::VertexLayoutElement* elements, int32_t elementCount) override;
 
 	Effekseer::Backend::RenderPassRef CreateRenderPass(Effekseer::FixedSizeVector<Effekseer::Backend::TextureRef, Effekseer::Backend::RenderTargetMax>& textures, Effekseer::Backend::TextureRef& depthTexture) override;
@@ -401,6 +450,8 @@ public:
 	Effekseer::Backend::ShaderRef CreateShaderFromBinary(const void* vsData, int32_t vsDataSize, const void* psData, int32_t psDataSize) override;
 
 	Effekseer::Backend::ShaderRef CreateShaderFromCodes(const Effekseer::CustomVector<Effekseer::StringView<char>>& vsCodes, const Effekseer::CustomVector<Effekseer::StringView<char>>& psCodes, Effekseer::Backend::UniformLayoutRef layout = nullptr) override;
+
+	Effekseer::Backend::ShaderRef CreateComputeShader(const void* csData, int32_t csDataSize) override;
 
 	Effekseer::Backend::PipelineStateRef CreatePipelineState(const Effekseer::Backend::PipelineStateParameter& param) override;
 
@@ -412,12 +463,16 @@ public:
 
 	void EndRenderPass() override;
 
+	void Dispatch(const Effekseer::Backend::DispatchParameter& dispatchParam) override;
+
 	std::string GetDeviceName() const override
 	{
 		return "DirectX11";
 	}
 
 	bool UpdateUniformBuffer(Effekseer::Backend::UniformBufferRef& buffer, int32_t size, int32_t offset, const void* data) override;
+
+	bool UpdateStorageBuffer(Effekseer::Backend::StorageBufferRef& buffer, int32_t size, int32_t offset, const void* data) override;
 
 	//! for DirectX11
 	Effekseer::Backend::TextureRef CreateTexture(ID3D11ShaderResourceView* srv, ID3D11RenderTargetView* rtv, ID3D11DepthStencilView* dsv);

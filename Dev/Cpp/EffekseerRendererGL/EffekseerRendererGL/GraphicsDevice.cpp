@@ -1,6 +1,7 @@
 #include "GraphicsDevice.h"
 #include "EffekseerRendererGL.Base.h"
 #include "EffekseerRendererGL.GLExtension.h"
+#include <EffekseerRendererCommon/EffekseerRenderer.CommonUtils.h>
 
 #ifdef __ANDROID__
 
@@ -24,6 +25,22 @@ namespace EffekseerRendererGL
 {
 namespace Backend
 {
+namespace
+{
+int32_t GetTextureDataSize(Effekseer::Backend::TextureFormatType format, int32_t width, int32_t height, int32_t depth = 1)
+{
+	int32_t sizePerWidth = 0;
+	int32_t alignedHeight = 0;
+	EffekseerRenderer::CalculateAlignedTextureInformation(format, {width, height}, sizePerWidth, alignedHeight);
+	return sizePerWidth * alignedHeight * depth;
+}
+
+int32_t GetMipSize(int32_t size, int32_t mipLevel)
+{
+	const auto mipSize = size >> mipLevel;
+	return mipSize > 0 ? mipSize : 1;
+}
+} // namespace
 
 Effekseer::CustomVector<GLint> GetVertexAttribLocations(const VertexLayoutRef& vertexLayout, const ShaderRef& shader)
 {
@@ -185,7 +202,7 @@ VertexArrayObject::VertexArrayObject()
 	if (GLExt::IsSupportedVertexArray())
 	{
 		GLExt::glGenVertexArrays(1, &vao_);
-		gen_thread_id_ = std::this_thread::get_id();
+		creationThreadId_ = std::this_thread::get_id();
 	}
 }
 
@@ -195,7 +212,7 @@ VertexArrayObject::~VertexArrayObject()
 	{
 		const auto thread_id_ = std::this_thread::get_id();
 
-		if (gen_thread_id_ != thread_id_)
+		if (creationThreadId_ != thread_id_)
 		{
 			Effekseer::Log(Effekseer::LogType::Error, "It have to delete the shader in a thread where the shader is generated.");
 		}
@@ -500,12 +517,31 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 	auto isCompressed = param.Format == Effekseer::Backend::TextureFormatType::BC1 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC2 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC3 ||
+						param.Format == Effekseer::Backend::TextureFormatType::BC7 ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC1_SRGB ||
 						param.Format == Effekseer::Backend::TextureFormatType::BC2_SRGB ||
-						param.Format == Effekseer::Backend::TextureFormatType::BC3_SRGB;
+						param.Format == Effekseer::Backend::TextureFormatType::BC3_SRGB ||
+						param.Format == Effekseer::Backend::TextureFormatType::BC7_SRGB;
+
+	const bool isBC7 = param.Format == Effekseer::Backend::TextureFormatType::BC7 ||
+						 param.Format == Effekseer::Backend::TextureFormatType::BC7_SRGB;
+
+	if (isBC7 && !GLExt::IsSupportedBPTC())
+	{
+		Effekseer::Log(Effekseer::LogType::Error,
+					   "BC7 texture is not supported on this OpenGL device. BPTC extension is required.");
+		return false;
+	}
 
 	const size_t initialDataSize = initialData.size();
 	const void* initialDataPtr = initialData.size() > 0 ? initialData.data() : nullptr;
+	const int32_t baseTextureSize = GetTextureDataSize(
+		param.Format,
+		param.Size[0],
+		param.Size[1],
+		param.Dimension == 2 ? (param.Size[2] > 0 ? param.Size[2] : 1) : param.Size[2]);
+	const bool hasProvidedMipData = param.MipLevelCount > 1 && initialDataSize > static_cast<size_t>(baseTextureSize);
+	const bool shouldGenerateMips = param.MipLevelCount < 1 || (param.MipLevelCount > 1 && !hasProvidedMipData);
 
 	GLint bound = 0;
 	int boundTarget = GL_TEXTURE_BINDING_2D;
@@ -564,6 +600,10 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		{
 			format = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
 		}
+		else if (param.Format == Effekseer::Backend::TextureFormatType::BC7)
+		{
+			format = GL_COMPRESSED_RGBA_BPTC_UNORM;
+		}
 		else if (param.Format == Effekseer::Backend::TextureFormatType::BC1_SRGB)
 		{
 			format = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
@@ -576,15 +616,32 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		{
 			format = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
 		}
+		else if (param.Format == Effekseer::Backend::TextureFormatType::BC7_SRGB)
+		{
+			format = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+		}
 
-		GLExt::glCompressedTexImage2D(target,
-									  0,
-									  format,
-									  param.Size[0],
-									  param.Size[1],
-									  0,
-									  static_cast<GLsizei>(initialDataSize),
-									  initialDataPtr);
+		const auto uploadMipLevelCount = hasProvidedMipData ? param.MipLevelCount : 1;
+		size_t offset = 0;
+		for (int32_t mipLevel = 0; mipLevel < uploadMipLevelCount; mipLevel++)
+		{
+			const auto mipWidth = GetMipSize(param.Size[0], mipLevel);
+			const auto mipHeight = GetMipSize(param.Size[1], mipLevel);
+			const auto mipSize = GetTextureDataSize(param.Format, mipWidth, mipHeight);
+			const auto mipData = initialDataPtr != nullptr && offset + static_cast<size_t>(mipSize) <= initialDataSize
+									 ? initialData.data() + offset
+									 : nullptr;
+
+			GLExt::glCompressedTexImage2D(target,
+										  mipLevel,
+										  format,
+										  mipWidth,
+										  mipHeight,
+										  0,
+										  static_cast<GLsizei>(mipSize),
+										  mipData);
+			offset += mipSize;
+		}
 	}
 	else
 	{
@@ -671,15 +728,28 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 			}
 			else
 			{
-				glTexImage2D(target,
-							 0,
-							 internalFormat,
-							 param.Size[0],
-							 param.Size[1],
-							 0,
-							 format,
-							 type,
-							 initialDataPtr);
+				const auto uploadMipLevelCount = hasProvidedMipData ? param.MipLevelCount : 1;
+				size_t offset = 0;
+				for (int32_t mipLevel = 0; mipLevel < uploadMipLevelCount; mipLevel++)
+				{
+					const auto mipWidth = GetMipSize(param.Size[0], mipLevel);
+					const auto mipHeight = GetMipSize(param.Size[1], mipLevel);
+					const auto mipSize = GetTextureDataSize(param.Format, mipWidth, mipHeight);
+					const auto mipData = initialDataPtr != nullptr && offset + static_cast<size_t>(mipSize) <= initialDataSize
+											 ? initialData.data() + offset
+											 : nullptr;
+
+					glTexImage2D(target,
+								 mipLevel,
+								 internalFormat,
+								 mipWidth,
+								 mipHeight,
+								 0,
+								 format,
+								 type,
+								 mipData);
+					offset += mipSize;
+				}
 			}
 		}
 		else
@@ -688,9 +758,22 @@ bool Texture::Init(const Effekseer::Backend::TextureParameter& param, const Effe
 		}
 	}
 
-	if (param.MipLevelCount != 1)
+	if (shouldGenerateMips)
 	{
 		GLExt::glGenerateMipmap(target);
+	}
+	else if (hasProvidedMipData)
+	{
+		// The provided mip chain can be shorter than the complete chain.
+		// Limit the mip range, otherwise the texture is incomplete and sampled as black.
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
+		// GL_TEXTURE_MAX_LEVEL is unavailable on OpenGL ES2
+		if (GLExt::GetDeviceType() != OpenGLDeviceType::OpenGLES2)
+		{
+			glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, param.MipLevelCount - 1);
+		}
 	}
 
 	if (graphicsDevice_->GetIsRestorationOfStatesRequired())
@@ -836,6 +919,8 @@ Shader::~Shader()
 
 bool Shader::Compile()
 {
+	graphicsDevice_->ClearLastShaderError();
+
 	std::array<GLchar*, elementMax> vsCodePtr;
 	std::array<GLchar*, elementMax> psCodePtr;
 	std::array<GLint, elementMax> vsCodeLen;
@@ -874,37 +959,89 @@ bool Shader::Compile()
 	GLExt::glLinkProgram(program);
 	GLExt::glGetProgramiv(program, GL_LINK_STATUS, &res_link);
 
-#ifndef NDEBUG
-	if (res_link == GL_FALSE)
+	const auto get_shader_log = [](GLuint shader) -> std::string
 	{
-		// output errors
-		char log[512];
-		int32_t log_size;
-		GLExt::glGetShaderInfoLog(vert_shader, sizeof(log), &log_size, log);
-		if (log_size > 0)
+		GLint logSize = 0;
+		GLExt::glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logSize);
+		if (logSize <= 1)
+		{
+			return {};
+		}
+
+		std::string log(static_cast<size_t>(logSize), '\0');
+		GLsizei written = 0;
+		GLExt::glGetShaderInfoLog(shader, logSize, &written, log.data());
+		log.resize(static_cast<size_t>(written));
+		return log;
+	};
+
+	const auto get_program_log = [](GLuint program_object) -> std::string
+	{
+		GLint logSize = 0;
+		GLExt::glGetProgramiv(program_object, GL_INFO_LOG_LENGTH, &logSize);
+		if (logSize <= 1)
+		{
+			return {};
+		}
+
+		std::string log(static_cast<size_t>(logSize), '\0');
+		GLsizei written = 0;
+		GLExt::glGetProgramInfoLog(program_object, logSize, &written, log.data());
+		log.resize(static_cast<size_t>(written));
+		return log;
+	};
+
+	const auto is_successful = (res_vs == GL_TRUE) && (res_fs == GL_TRUE) && (res_link == GL_TRUE);
+
+	if (!is_successful)
+	{
+		std::string vertex_log_;
+		std::string pixel_log_;
+		std::string program_log_;
+
+		if (res_vs == GL_FALSE)
+		{
+			vertex_log_ = get_shader_log(vert_shader);
+		}
+
+		if (res_fs == GL_FALSE)
+		{
+			pixel_log_ = get_shader_log(frag_shader);
+		}
+
+		if (res_link == GL_FALSE)
+		{
+			program_log_ = get_program_log(program);
+		}
+
+		graphicsDevice_->SetLastShaderError(vertex_log_, pixel_log_, program_log_);
+
+#ifndef NDEBUG
+		if (!vertex_log_.empty())
 		{
 			LOG(": Vertex Shader error.\n");
-			LOG(log);
+			LOG(vertex_log_.c_str());
 		}
-		GLExt::glGetShaderInfoLog(frag_shader, sizeof(log), &log_size, log);
-		if (log_size > 0)
+
+		if (!pixel_log_.empty())
 		{
 			LOG(": Fragment Shader error.\n");
-			LOG(log);
+			LOG(pixel_log_.c_str());
 		}
-		GLExt::glGetProgramInfoLog(program, sizeof(log), &log_size, log);
-		if (log_size > 0)
+
+		if (!program_log_.empty())
 		{
 			LOG(": Shader Link error.\n");
-			LOG(log);
+			LOG(program_log_.c_str());
 		}
-	}
 #endif
+	}
+
 	// dispose shader objects
 	GLExt::glDeleteShader(frag_shader);
 	GLExt::glDeleteShader(vert_shader);
 
-	if (res_link == GL_FALSE)
+	if (!is_successful)
 	{
 		GLExt::glDeleteProgram(program);
 		return false;
@@ -1147,6 +1284,8 @@ GraphicsDevice::GraphicsDevice(OpenGLDeviceType deviceType, bool isExtensionsEna
 	}
 
 	glGetIntegerv(GL_FRONT_FACE, &frontFace_);
+
+	ClearLastShaderError();
 }
 
 GraphicsDevice::~GraphicsDevice()
@@ -1162,14 +1301,44 @@ GraphicsDevice::~GraphicsDevice()
 	}
 }
 
+void GraphicsDevice::ClearLastShaderError()
+{
+	for (auto& error : lastShaderErrors_)
+	{
+		error.clear();
+	}
+}
+
+void GraphicsDevice::SetLastShaderError(const std::string& vertex, const std::string& pixel, const std::string& program)
+{
+	lastShaderErrors_[0] = vertex;
+	lastShaderErrors_[1] = pixel;
+	lastShaderErrors_[2] = program;
+}
+
+const std::string& GraphicsDevice::GetLastVertexShaderError() const
+{
+	return lastShaderErrors_[0];
+}
+
+const std::string& GraphicsDevice::GetLastPixelShaderError() const
+{
+	return lastShaderErrors_[1];
+}
+
+const std::string& GraphicsDevice::GetLastProgramShaderError() const
+{
+	return lastShaderErrors_[2];
+}
+
 bool GraphicsDevice::GetIsRestorationOfStatesRequired() const
 {
-	return is_restoration_of_states_required_;
+	return isRestorationOfStatesRequired_;
 }
 
 void GraphicsDevice::SetIsRestorationOfStatesRequired(bool value)
 {
-	is_restoration_of_states_required_ = value;
+	isRestorationOfStatesRequired_ = value;
 }
 
 bool GraphicsDevice::GetIsValid() const
@@ -1434,9 +1603,7 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 	GLExt::glUseProgram(shader->GetProgram());
 
 	// textures
-	const auto textureCount = std::min(static_cast<int32_t>(shader->GetLayout()->GetTextures().size()), drawParam.TextureCount);
-
-	for (int32_t i = 0; i < textureCount; i++)
+	for (int32_t i = 0; i < std::min(static_cast<int>(shader->GetTextureLocations().size()), drawParam.ResourceSlotCount); i++)
 	{
 		const auto textureSlot = shader->GetTextureLocations()[i];
 
@@ -1447,9 +1614,10 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 
 		GLExt::glUniform1i(textureSlot, i);
 
-		auto texture = static_cast<Texture*>(drawParam.TexturePtrs[i].Get());
-		if (texture != nullptr)
+		auto textureBinder = std::get_if<Effekseer::Backend::TextureBinder>(&drawParam.ResourceBinders[i]);
+		if (textureBinder != nullptr)
 		{
+			auto texture = textureBinder->Texture.DownCast<Backend::Texture>();
 			GLExt::glActiveTexture(GL_TEXTURE0 + i);
 			glBindTexture(texture->GetTarget(), texture->GetBuffer());
 
@@ -1458,13 +1626,11 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 			static const GLint glfilterMin[] = {GL_NEAREST, GL_LINEAR_MIPMAP_LINEAR};
 			static const GLint glfilterMin_NoneMipmap[] = {GL_NEAREST, GL_LINEAR};
 			static const GLint glfilterMag[] = {GL_NEAREST, GL_LINEAR};
-			static const GLint glwrap[] = {GL_REPEAT, GL_CLAMP_TO_EDGE};
-
 			GLint filterMin = 0;
 			GLint filterMag = 0;
-			GLint wrap = 0;
+			GLint wrap = GL_REPEAT;
 
-			if (drawParam.TextureSamplingTypes[i] == Effekseer::Backend::TextureSamplingType::Linear)
+			if (textureBinder->SamplingType == Effekseer::Backend::TextureSamplingType::Linear)
 			{
 				if (texture->GetParameter().MipLevelCount != 1)
 				{
@@ -1489,13 +1655,17 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 				filterMag = glfilterMag[0];
 			}
 
-			if (drawParam.TextureWrapTypes[i] == Effekseer::Backend::TextureWrapType::Clamp)
+			if (textureBinder->WrapType == Effekseer::Backend::TextureWrapType::Clamp)
 			{
-				wrap = glwrap[1];
+				wrap = GL_CLAMP_TO_EDGE;
+			}
+			else if (textureBinder->WrapType == Effekseer::Backend::TextureWrapType::Mirror)
+			{
+				wrap = GL_MIRRORED_REPEAT;
 			}
 			else
 			{
-				wrap = glwrap[0];
+				wrap = GL_REPEAT;
 			}
 
 			if (deviceType_ == OpenGLDeviceType::OpenGL3 || deviceType_ == OpenGLDeviceType::OpenGLES3)
@@ -1522,8 +1692,8 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 
 	// uniformss
 	StoreUniforms(pip->GetParam().ShaderPtr.DownCast<Backend::Shader>(),
-				  drawParam.VertexUniformBufferPtr.DownCast<Backend::UniformBuffer>(),
-				  drawParam.PixelUniformBufferPtr.DownCast<Backend::UniformBuffer>(),
+				  drawParam.VertexUniformBufferPtrs[0].DownCast<Backend::UniformBuffer>(),
+				  drawParam.PixelUniformBufferPtrs[0].DownCast<Backend::UniformBuffer>(),
 				  false);
 
 	GLCheckError();
@@ -1677,11 +1847,11 @@ void GraphicsDevice::Draw(const Effekseer::Backend::DrawParameter& drawParam)
 
 	if (drawParam.InstanceCount > 1)
 	{
-		GLExt::glDrawElementsInstanced(primitiveMode, indexPerPrimitive * drawParam.PrimitiveCount, indexStrideType, (void*)(drawParam.IndexOffset * indexStride), drawParam.InstanceCount);
+		GLExt::glDrawElementsInstanced(primitiveMode, indexPerPrimitive * drawParam.PrimitiveCount, indexStrideType, reinterpret_cast<void*>(static_cast<size_t>(drawParam.IndexOffset) * indexStride), drawParam.InstanceCount);
 	}
 	else
 	{
-		glDrawElements(primitiveMode, indexPerPrimitive * drawParam.PrimitiveCount, indexStrideType, (void*)(drawParam.IndexOffset * indexStride));
+		glDrawElements(primitiveMode, indexPerPrimitive * drawParam.PrimitiveCount, indexStrideType, reinterpret_cast<void*>(static_cast<size_t>(drawParam.IndexOffset) * indexStride));
 	}
 
 	DisableLayouts(pip->GetAttribLocations());

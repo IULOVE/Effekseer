@@ -6,7 +6,10 @@
 // Include
 //----------------------------------------------------------------------------------
 #include "Effekseer.Base.Pre.h"
+#include "Effekseer.CoordinateSystem.h"
+#include "Effekseer.ExternalModel.h"
 #include "Effekseer.Matrix44.h"
+#include "Effekseer.RenderingTransform.h"
 #include "Effekseer.Vector3D.h"
 
 //----------------------------------------------------------------------------------
@@ -41,6 +44,14 @@ using RandFunc = std::function<int()>;
 	isRemovingManager マネージャーを破棄したときにエフェクトのインスタンスを破棄しているか
 */
 using EffectInstanceRemovingCallback = std::function<void(Manager*, Handle, bool)>;
+
+/**
+	@brief
+	\~English Callback to query external collision. It returns true when a collision occurs and sets collisionPosition as the hit point and collisionNormal as the surface normal.
+	\~Japanese 外部との衝突を問い合わせるためのコールバック。衝突した場合はtrueを返し、collisionPositionに衝突点、collisionNormalに衝突面の法線を設定する。
+*/
+using CollisionCallback =
+	std::function<bool(const Vector3D& startPosition, const Vector3D& endPosition, Vector3D& collisionPosition, Vector3D& collisionNormal)>;
 
 /**
 	@brief エフェクト管理クラス
@@ -80,8 +91,8 @@ public:
 			\~English Perform synchronous update
 			\~Japanese 同期更新を行う
 			@note
-			\~English If true, update processing is performed synchronously. If false, update processing is performed asynchronously (after this, do not call anything other than Draw)
-			\~Japanese trueなら同期的に更新処理を行う。falseなら非同期的に更新処理を行う（次はDraw以外呼び出してはいけない）
+			\~English If true, update processing is performed synchronously. If false, update processing is performed asynchronously (after this, do not call anything other than Draw or Compute)
+			\~Japanese trueなら同期的に更新処理を行う。falseなら非同期的に更新処理を行う（次はDraw/Compute以外呼び出してはいけない）
 		*/
 		bool SyncUpdate = true;
 	};
@@ -94,6 +105,14 @@ public:
 	struct DrawParameter
 	{
 		Matrix44 ViewProjectionMatrix;
+
+		/**
+			@brief
+			\~English An orthogonal coordinate transform applied only to this draw call
+			\~Japanese この描画呼び出しだけに適用する直交座標系変換
+		*/
+		Matrix44 RenderingCoordinateMatrix;
+
 		float ZNear = 0.0f;
 		float ZFar = 0.0f;
 
@@ -129,6 +148,17 @@ public:
 		DrawParameter();
 	};
 
+	struct DrawTime
+	{
+		int32_t WorkerThreadWait = 0;
+		int32_t MutexLock = 0;
+		int32_t Culling = 0;
+		int32_t Sorting = 0;
+		int32_t DrawSets = 0;
+		int32_t GpuParticles = 0;
+		int32_t Total = 0;
+	};
+
 	/**
 		@brief
 		\~English Parameters of Manager::SetLayerParameter to be set for each layer index.
@@ -157,6 +187,17 @@ public:
 			LODのデバッグに役に立ちます。
 		*/
 		float DistanceBias = 0.0f;
+	};
+
+	struct PlayParameter
+	{
+		EffectRef Effect;
+		Vector3D Position = {0.0f, 0.0f, 0.0f};
+		Vector3D Rotation = {0.0f, 0.0f, 0.0f};
+		Vector3D Scale = {1.0f, 1.0f, 1.0f};
+		int32_t StartFrame = 0;
+		std::vector<ExternalModel> ExternalModels;
+		EffectFlipParameter Flip;
 	};
 
 protected:
@@ -201,6 +242,20 @@ public:
 	virtual void SetRandFunc(RandFunc func) = 0;
 
 	/**
+		@brief
+		\~English Set a callback to determine collision points against external objects.
+		\~Japanese 外部オブジェクトへの衝突判定に使用するコールバックを設定する。
+	*/
+	virtual void SetCollisionCallback(CollisionCallback callback) = 0;
+
+	/**
+		@brief
+		\~English Get a callback to determine collision points against external objects.
+		\~Japanese 外部オブジェクトへの衝突判定に使用するコールバックを取得する。
+	*/
+	virtual CollisionCallback GetCollisionCallback() const = 0;
+
+	/**
 		@brief	座標系を取得する。
 		@return	座標系
 	*/
@@ -214,6 +269,32 @@ public:
 		エフェクトファイルを読み込む前に設定する必要がある。
 	*/
 	virtual void SetCoordinateSystem(CoordinateSystem coordinateSystem) = 0;
+
+	/**
+		@brief Gets how the coordinate-system setting is applied.
+	*/
+	virtual CoordinateSystemMode GetCoordinateSystemMode() const = 0;
+
+	/**
+		@brief Selects legacy simulation conversion or boundary conversion.
+		@note Set this before loading effects. ExternalConversion keeps effect loading and simulation in RH space.
+		To do so it forces the CoordinateSystem of the attached Setting to RH (switching back to LegacySimulation restores
+		the previous coordinate system). Because a Setting can be shared, do not share one Setting between managers
+		that use different CoordinateSystemModes or coordinate systems.
+	*/
+	virtual void SetCoordinateSystemMode(CoordinateSystemMode mode) = 0;
+
+	/**
+		@brief Gets the internal-RH to external coordinate transform.
+	*/
+	virtual CoordinateSystemTransform GetCoordinateSystemTransform() const = 0;
+
+	/**
+		@brief Sets the internal-RH to external coordinate transform.
+		@return false when the matrix is not a signed axis permutation.
+		@note Set this before loading effects. It takes effect at the Manager boundary only in ExternalConversion mode.
+	*/
+	virtual bool SetCoordinateSystemTransform(const CoordinateSystemTransform& transform) = 0;
 
 	/**
 		@brief	スプライト描画機能を取得する。
@@ -270,14 +351,42 @@ public:
 		\~English get an GPU performance timer
 		\~Japanese GPUパフォーマンスタイマー取得する。
 	*/
-	virtual GPUTimerRef GetGPUTimer() = 0;
+	virtual GpuTimerRef GetGpuTimer() = 0;
 
 	/**
 		@brief
 		\~English get an GPU performance timer
 		\~Japanese GPUパフォーマンスタイマーを設定する。
 	*/
-	virtual void SetGPUTimer(GPUTimerRef gpuTimer) = 0;
+	virtual void SetGpuTimer(GpuTimerRef gpuTimer) = 0;
+
+	/**
+		@brief
+		\~English get an GPU particle system
+		\~Japanese GPUパーティクルシステム取得する。
+	*/
+	virtual GpuParticleSystemRef GetGpuParticleSystem() = 0;
+
+	/**
+		@brief
+		\~English get an GPU particle system
+		\~Japanese GPUパーティクルシステムを設定する。
+	*/
+	virtual void SetGpuParticleSystem(GpuParticleSystemRef system) = 0;
+
+	/**
+	@brief
+	\~English get an GPU particle factory
+	\~Japanese GPUパーティクルファクトリ取得する。
+	*/
+	virtual GpuParticleFactoryRef GetGpuParticleFactory() = 0;
+
+	/**
+	@brief
+	\~English get an GPU particle factory
+	\~Japanese GPUパーティクルファクトリを設定する。
+	*/
+	virtual void SetGpuParticleFactory(GpuParticleFactoryRef factory) = 0;
 
 	/**
 		@brief	設定クラスを取得する。
@@ -534,6 +643,17 @@ public:
 		@param	z		[in]	Z方向拡大率
 	*/
 	virtual void SetScale(Handle handle, float x, float y, float z) = 0;
+
+	/**
+		@brief Gets the rendering-only root-local flip of a playing effect.
+	*/
+	virtual EffectFlipParameter GetEffectFlip(Handle handle) const = 0;
+
+	/**
+		@brief Sets a rendering-only root-local flip of a playing effect.
+		@note This does not change simulation matrices or particle state.
+	*/
+	virtual void SetEffectFlip(Handle handle, const EffectFlipParameter& flip) = 0;
 
 	/**
 	@brief
@@ -826,6 +946,13 @@ public:
 
 	/**
 	@brief
+	\~English	Compute GPU particles.
+	\~Japanese	GPUパーティクルの計算処理を行う。
+	*/
+	virtual void Compute() = 0;
+
+	/**
+	@brief
 	\~English	Draw particles.
 	\~Japanese	描画処理を行う。
 	*/
@@ -901,6 +1028,13 @@ public:
 
 	/**
 		@brief
+		\~English	Play an effect with detailed parameters.
+		\~Japanese	再生用の詳細なパラメーターを指定して再生する。
+	*/
+	virtual Handle Play(const PlayParameter& parameter) = 0;
+
+	/**
+		@brief
 		\~English	Get a camera's culling mask to show all effects
 		\~Japanese	全てのエフェクトを表示するためのカメラのカリングマスクを取得する。
 	*/
@@ -922,17 +1056,24 @@ public:
 
 	/**
 		@brief
+		\~English	Gets the detailed CPU time required for the Draw process.
+		\~Japanese	Draw処理にかかるCPU時間の内訳を取得する。
+	*/
+	virtual DrawTime GetDrawTimeBreakdown() const = 0;
+
+	/**
+		@brief
 		\~English	Gets the GPU time (microseconds) taken to render the all effects.
 		\~Japanese	エフェクト全ての描画処理にかかるGPU時間(マイクロ秒)を取得する。
 	*/
-	virtual int32_t GetGPUTime() const = 0;
+	virtual int32_t GetGpuTime() const = 0;
 
 	/**
 		@brief
 		\~English	Gets the GPU time (microseconds) taken to render the effect.
 		\~Japanese	エフェクトの描画処理にかかるGPU時間(マイクロ秒)を取得する。
 	*/
-	virtual int32_t GetGPUTime(Handle handle) const = 0;
+	virtual int32_t GetGpuTime(Handle handle) const = 0;
 
 	/**
 		@brief

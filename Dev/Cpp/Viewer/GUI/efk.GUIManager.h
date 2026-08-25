@@ -13,17 +13,17 @@
 #include "../3rdParty/imgui_platform/imgui_impl_dx11.h"
 #endif
 
-//#include "../3rdParty/imgui_glfw_gl3/imgui_impl_glfw_gl3.h"
+// #include "../3rdParty/imgui_glfw_gl3/imgui_impl_glfw_gl3.h"
 
 #include "../../3rdParty/imgui_markdown/imgui_markdown.h"
 #include <EditorCommon/GUI/FramerateController.h>
 #include <EditorCommon/GUI/MainWindow.h>
 
 #include "../Graphics/GraphicsDevice.h"
+#include <EffekseerToolRuntime/Image.h>
 
 namespace Effekseer::Tool
 {
-class Image;
 class GraphicsDevice;
 class GradientHDRState;
 class GradientHDRGUIState;
@@ -46,7 +46,8 @@ enum class WindowFlags : int32_t
 	// ShowBorders          = 1 << 7,   // Show borders around windows and items (OBSOLETE! Use e.g. style.FrameBorderSize=1.0f to enable
 	// borders).
 	NoSavedSettings = 1 << 8, // Never load/save settings in .ini file
-	NoInputs = 1 << 9,		  // Disable catching mouse or keyboard inputs, hovering test with pass through.
+	NoMouseInputs = 1 << 9,	  // Disable catching mouse inputs, hovering test with pass through.
+	NoInputs = (1 << 9) | (1 << 16) | (1 << 17), // Disable catching mouse or keyboard inputs, hovering test with pass through.
 	MenuBar = 1 << 10,		  // Has a menu-bar
 	HorizontalScrollbar =
 		1 << 11, // Allow horizontal scrollbar to appear (off by default). You may use SetNextWindowContentSize(ImVec2(width,0.0f)); prior
@@ -56,12 +57,11 @@ enum class WindowFlags : int32_t
 		1 << 13,						 // Disable bringing window to front when taking focus (e.g. clicking on it or programatically giving it focus)
 	AlwaysVerticalScrollbar = 1 << 14,	 // Always show vertical scrollbar (even if ContentSize.y < Size.y)
 	AlwaysHorizontalScrollbar = 1 << 15, // Always show horizontal scrollbar (even if ContentSize.x < Size.x)
-	AlwaysUseWindowPadding = 1 << 16,	 // Ensure child windows without border uses style.WindowPadding (ignored by default for non-bordered
-										 // child windows, because more convenient)
+	AlwaysUseWindowPadding = 0,			 // Obsoleted in imgui 1.90. Use child flags if this becomes necessary again.
 	// ResizeFromAnySide = 1 << 17,  // (WIP) Enable resize from any corners and borders. Your back-end needs to honor the different values
 	// of io.MouseCursor set by imgui.
-	NoNavInputs = 1 << 18, // No gamepad/keyboard navigation within the window
-	NoNavFocus = 1 << 19,  // No focusing toward this window with gamepad/keyboard navigation (e.g. skipped by CTRL+TAB)
+	NoNavInputs = 1 << 16, // No gamepad/keyboard navigation within the window
+	NoNavFocus = 1 << 17,  // No focusing toward this window with gamepad/keyboard navigation (e.g. skipped by CTRL+TAB)
 };
 
 // Enumeration for ColorEdit3() / ColorEdit4() / ColorPicker3() / ColorPicker4() / ColorButton()
@@ -80,9 +80,9 @@ enum class ColorEditFlags : int32_t
 	NoBorder = 1 << 10,		 //              // ColorButton: disable border (which is enforced by default)
 
 	// User Options (right-click on widget to change some of them).
-	AlphaBar = 1 << 16,			//              // ColorEdit, ColorPicker: show vertical alpha bar/gradient in picker.
-	AlphaPreview = 1 << 17,		//              // ColorEdit, ColorPicker, ColorButton: display preview as a transparent color over a checkerboard, instead of opaque.
-	AlphaPreviewHalf = 1 << 18, //              // ColorEdit, ColorPicker, ColorButton: display half opaque / half checkerboard, instead of opaque.
+	AlphaBar = 1 << 18,			//              // ColorEdit, ColorPicker: show vertical alpha bar/gradient in picker.
+	AlphaPreview = 0,			//              // Alpha preview became the default in imgui 1.91.8, so this now aliases 0.
+	AlphaPreviewHalf = 1 << 14, //              // ColorEdit, ColorPicker, ColorButton: display half opaque / half checkerboard, instead of opaque.
 	HDR = 1 << 19,				//              // (WIP) ColorEdit: Currently only disable 0.0f..1.0f limits in RGBA edition (note: you probably want to use ImGuiColorEditFlags_Float flag as well).
 	DisplayRGB = 1 << 20,		// [Display]    // ColorEdit: override _display_ type among RGB/HSV/Hex. ColorPicker: select any combination using one or more of RGB/HSV/Hex.
 	DisplayHSV = 1 << 21,		// [Display]    // "
@@ -108,7 +108,7 @@ enum class ComboFlags : int32_t
 {
 	None = 0,
 	PopupAlignLeft = 1 << 0, // Align the popup toward the left by default
-	HeightSmall = 1 << 1,	 // Max ~4 items visible. Tip: If you want your combo popup to be a specific size you can use
+	HeightSmall = 1 << 1,	  // Max ~4 items visible. Tip: If you want your combo popup to be a specific size you can use
 							 // SetNextWindowSizeConstraints() prior to calling BeginCombo()
 	HeightRegular = 1 << 2,	 // Max ~8 items visible (default)
 	HeightLarge = 1 << 3,	 // Max ~20 items visible
@@ -141,8 +141,8 @@ enum class TreeNodeFlags : int32_t
 	FramePadding = 1 << 10,			// Use FramePadding (even for an unframed text node) to vertically align text baseline to regular widget height. Equivalent to calling AlignTextToFramePadding().
 	SpanAvailWidth = 1 << 11,		// Extend hit box to the right-most edge, even if not framed. This is not the default in order to allow adding other items on the same line. In the future we may refactor the hit system to be front-to-back, allowing natural overlaps and then this can become the default.
 	SpanFullWidth = 1 << 12,		// Extend hit box to the left-most and right-most edges (bypass the indented area).
-	NavLeftJumpsBackHere = 1 << 13, // (WIP) Nav: left direction may move to this TreeNode() from any of its child (items submitted between TreeNode and TreePop)
-	CollapsingHeader = Framed | NoTreePushOnOpen | NoAutoOpenOnLog
+	NavLeftJumpsBackHere = 1 << 17, // Compatibility alias retained by imgui.
+	CollapsingHeader = (1 << 1) | (1 << 3) | (1 << 4)
 };
 
 enum class MouseCursor : int32_t
@@ -162,114 +162,114 @@ enum InputTextFlags
 	None = 0,
 	CharsDecimal = 1 << 0,		 // Allow 0123456789.+-*/
 	CharsHexadecimal = 1 << 1,	 // Allow 0123456789ABCDEFabcdef
-	CharsUppercase = 1 << 2,	 // Turn a..z into A..Z
-	CharsNoBlank = 1 << 3,		 // Filter out spaces, tabs
-	AutoSelectAll = 1 << 4,		 // Select entire text when first taking mouse focus
-	EnterReturnsTrue = 1 << 5,	 // Return 'true' when Enter is pressed (as opposed to when the value was modified)
-	CallbackCompletion = 1 << 6, // Call user function on pressing TAB (for completion handling)
-	CallbackHistory = 1 << 7,	 // Call user function on pressing Up/Down arrows (for history handling)
-	CallbackAlways = 1 << 8,	 // Call user function every time. User code may query cursor position, modify text buffer.
+	CharsScientific = 1 << 2,	 // Allow 0123456789.+-*/eE (Scientific notation input)
+	CharsUppercase = 1 << 3,	 // Turn a..z into A..Z
+	CharsNoBlank = 1 << 4,		 // Filter out spaces, tabs
+	AutoSelectAll = 1 << 12,	 // Select entire text when first taking mouse focus
+	EnterReturnsTrue = 1 << 6,	 // Return 'true' when Enter is pressed (as opposed to when the value was modified)
+	CallbackCompletion = 1 << 18, // Call user function on pressing TAB (for completion handling)
+	CallbackHistory = 1 << 19,	 // Call user function on pressing Up/Down arrows (for history handling)
+	CallbackAlways = 1 << 20,	 // Call user function every time. User code may query cursor position, modify text buffer.
 	CallbackCharFilter =
-		1 << 9,					   // Call user function to filter character. Modify data->EventChar to replace/filter input, or return 1 to discard character.
-	AllowTabInput = 1 << 10,	   // Pressing TAB input a '\t' character into the text field
-	CtrlEnterForNewLine = 1 << 11, // In multi-line mode, unfocus with Enter, add new line with Ctrl+Enter (default is opposite: unfocus
+		1 << 21,					   // Call user function to filter character. Modify data->EventChar to replace/filter input, or return 1 to discard character.
+	AllowTabInput = 1 << 5,	   // Pressing TAB input a '\t' character into the text field
+	CtrlEnterForNewLine = 1 << 8, // In multi-line mode, unfocus with Enter, add new line with Ctrl+Enter (default is opposite: unfocus
 								   // with Ctrl+Enter, add line with Enter).
-	NoHorizontalScroll = 1 << 12,  // Disable following the cursor horizontally
-	AlwaysInsertMode = 1 << 13,	   // Insert mode
-	ReadOnly = 1 << 14,			   // Read-only mode
-	Password = 1 << 15,			   // Password mode, display all characters as '*'
+	NoHorizontalScroll = 1 << 15,  // Disable following the cursor horizontally
+	AlwaysInsertMode = 1 << 11,	   // Insert mode (legacy wrapper name kept for compatibility)
+	ReadOnly = 1 << 9,			   // Read-only mode
+	Password = 1 << 10,			   // Password mode, display all characters as '*'
 	NoUndoRedo = 1 << 16,		   // Disable undo/redo. Note that input text owns the text data while active, if you want to provide your own
 								   // undo/redo stack you need e.g. to call ClearActiveID().
-	CharsScientific = 1 << 17,	   // Allow 0123456789.+-*/eE (Scientific notation input)
 };
 
 enum class ImGuiColFlags : int32_t
 {
-	Text,
-	TextDisabled,
-	WindowBg, // Background of normal windows
-	ChildBg,  // Background of child windows
-	PopupBg,  // Background of popups, menus, tooltips windows
-	Border,
-	BorderShadow,
-	FrameBg, // Background of checkbox, radio button, plot, slider, text input
-	FrameBgHovered,
-	FrameBgActive,
-	TitleBg,
-	TitleBgActive,
-	TitleBgCollapsed,
-	MenuBarBg,
-	ScrollbarBg,
-	ScrollbarGrab,
-	ScrollbarGrabHovered,
-	ScrollbarGrabActive,
-	CheckMark,
-	SliderGrab,
-	SliderGrabActive,
-	Button,
-	ButtonHovered,
-	ButtonActive,
-	Header, // Header* colors are used for CollapsingHeader, TreeNode, Selectable, MenuItem
-	HeaderHovered,
-	HeaderActive,
-	Separator,
-	SeparatorHovered,
-	SeparatorActive,
-	ResizeGrip, // Resize grip in lower-right and lower-left corners of windows.
-	ResizeGripHovered,
-	ResizeGripActive,
-	Tab, // TabItem in a TabBar
-	TabHovered,
-	TabActive,
-	TabUnfocused,
-	TabUnfocusedActive,
-	DockingPreview, // Preview overlay color when about to docking something
-	DockingEmptyBg, // Background color for empty node (e.g. CentralNode with no window docked into it)
-	PlotLines,
-	PlotLinesHovered,
-	PlotHistogram,
-	PlotHistogramHovered,
-	TableHeaderBg,	   // Table header background
-	TableBorderStrong, // Table outer and header borders (prefer using Alpha=1.0 here)
-	TableBorderLight,  // Table inner borders (prefer using Alpha=1.0 here)
-	TableRowBg,		   // Table row background (even rows)
-	TableRowBgAlt,	   // Table row background (odd rows)
-	TextSelectedBg,
-	DragDropTarget,		   // Rectangle highlighting a drop target
-	NavHighlight,		   // Gamepad/keyboard: current highlighted item
-	NavWindowingHighlight, // Highlight window when using CTRL+TAB
-	NavWindowingDimBg,	   // Darken/colorize entire screen behind the CTRL+TAB window list, when active
-	ModalWindowDimBg,	   // Darken/colorize entire screen behind a modal window, when one is active
+	Text = 0,
+	TextDisabled = 1,
+	WindowBg = 2, // Background of normal windows
+	ChildBg = 3,  // Background of child windows
+	PopupBg = 4,  // Background of popups, menus, tooltips windows
+	Border = 5,
+	BorderShadow = 6,
+	FrameBg = 7, // Background of checkbox, radio button, plot, slider, text input
+	FrameBgHovered = 8,
+	FrameBgActive = 9,
+	TitleBg = 10,
+	TitleBgActive = 11,
+	TitleBgCollapsed = 12,
+	MenuBarBg = 13,
+	ScrollbarBg = 14,
+	ScrollbarGrab = 15,
+	ScrollbarGrabHovered = 16,
+	ScrollbarGrabActive = 17,
+	CheckMark = 18,
+	SliderGrab = 19,
+	SliderGrabActive = 20,
+	Button = 21,
+	ButtonHovered = 22,
+	ButtonActive = 23,
+	Header = 24, // Header* colors are used for CollapsingHeader, TreeNode, Selectable, MenuItem
+	HeaderHovered = 25,
+	HeaderActive = 26,
+	Separator = 27,
+	SeparatorHovered = 28,
+	SeparatorActive = 29,
+	ResizeGrip = 30, // Resize grip in lower-right and lower-left corners of windows.
+	ResizeGripHovered = 31,
+	ResizeGripActive = 32,
+	TabHovered = 34,
+	Tab = 35,
+	TabActive = 36,
+	TabUnfocused = 38,
+	TabUnfocusedActive = 39,
+	DockingPreview = 41,
+	DockingEmptyBg = 42,
+	PlotLines = 43,
+	PlotLinesHovered = 44,
+	PlotHistogram = 45,
+	PlotHistogramHovered = 46,
+	TableHeaderBg = 47,
+	TableBorderStrong = 48,
+	TableBorderLight = 49,
+	TableRowBg = 50,
+	TableRowBgAlt = 51,
+	TextSelectedBg = 53,
+	DragDropTarget = 55,
+	NavHighlight = 58,
+	NavWindowingHighlight = 59,
+	NavWindowingDimBg = 60,
+	ModalWindowDimBg = 61,
 };
 
 enum ImGuiStyleVarFlags : int32_t
 {
-	Alpha,				 // float     Alpha
-	DisabledAlpha,		 // float     DisabledAlpha
-	WindowPadding,		 // ImVec2    WindowPadding
-	WindowRounding,		 // float     WindowRounding
-	WindowBorderSize,	 // float     WindowBorderSize
-	WindowMinSize,		 // ImVec2    WindowMinSize
-	WindowTitleAlign,	 // ImVec2    WindowTitleAlign
-	ChildRounding,		 // float     ChildRounding
-	ChildBorderSize,	 // float     ChildBorderSize
-	PopupRounding,		 // float     PopupRounding
-	PopupBorderSize,	 // float     PopupBorderSize
-	FramePadding,		 // ImVec2    FramePadding
-	FrameRounding,		 // float     FrameRounding
-	FrameBorderSize,	 // float     FrameBorderSize
-	ItemSpacing,		 // ImVec2    ItemSpacing
-	ItemInnerSpacing,	 // ImVec2    ItemInnerSpacing
-	IndentSpacing,		 // float     IndentSpacing
-	CellPadding,		 // ImVec2    CellPadding
-	ScrollbarSize,		 // float     ScrollbarSize
-	ScrollbarRounding,	 // float     ScrollbarRounding
-	GrabMinSize,		 // float     GrabMinSize
-	GrabRounding,		 // float     GrabRounding
-	TabRounding,		 // float     TabRounding
-	ButtonTextAlign,	 // ImVec2    ButtonTextAlign
-	SelectableTextAlign, // ImVec2    SelectableTextAlign
-	LayoutAlign,		 // float     LayoutAlign
+	Alpha = 0,				 // float     Alpha
+	DisabledAlpha = 1,		 // float     DisabledAlpha
+	WindowPadding = 2,		 // ImVec2    WindowPadding
+	WindowRounding = 3,		 // float     WindowRounding
+	WindowBorderSize = 4,	 // float     WindowBorderSize
+	WindowMinSize = 5,		 // ImVec2    WindowMinSize
+	WindowTitleAlign = 6,	 // ImVec2    WindowTitleAlign
+	ChildRounding = 7,		 // float     ChildRounding
+	ChildBorderSize = 8,	 // float     ChildBorderSize
+	PopupRounding = 9,		 // float     PopupRounding
+	PopupBorderSize = 10,	 // float     PopupBorderSize
+	FramePadding = 11,		 // ImVec2    FramePadding
+	FrameRounding = 12,		 // float     FrameRounding
+	FrameBorderSize = 13,	 // float     FrameBorderSize
+	ItemSpacing = 14,		 // ImVec2    ItemSpacing
+	ItemInnerSpacing = 15,	 // ImVec2    ItemInnerSpacing
+	IndentSpacing = 16,		 // float     IndentSpacing
+	CellPadding = 17,		 // ImVec2    CellPadding
+	ScrollbarSize = 18,		 // float     ScrollbarSize
+	ScrollbarRounding = 19,	 // float     ScrollbarRounding
+	GrabMinSize = 21,		 // float     GrabMinSize
+	GrabRounding = 22,		 // float     GrabRounding
+	TabRounding = 25,		 // float     TabRounding
+	ButtonTextAlign = 35,	 // ImVec2    ButtonTextAlign
+	SelectableTextAlign = 36, // ImVec2    SelectableTextAlign
+	LayoutAlign = 41,		 // float     LayoutAlign
 };
 
 enum class FCurveInterporationType : int32_t
@@ -318,11 +318,11 @@ enum class TableFlags : int32_t
 	BordersOuterH = 1 << 8,						  // Draw horizontal borders at the top and bottom.
 	BordersInnerV = 1 << 9,						  // Draw vertical borders between columns.
 	BordersOuterV = 1 << 10,					  // Draw vertical borders on the left and right sides.
-	BordersH = BordersInnerH | BordersOuterH,	  // Draw horizontal borders.
-	BordersV = BordersInnerV | BordersOuterV,	  // Draw vertical borders.
-	BordersInner = BordersInnerV | BordersInnerH, // Draw inner borders.
-	BordersOuter = BordersOuterV | BordersOuterH, // Draw outer borders.
-	Borders = BordersInner | BordersOuter,		  // Draw all borders.
+	BordersH = (1 << 7) | (1 << 8),	  // Draw horizontal borders.
+	BordersV = (1 << 9) | (1 << 10),	  // Draw vertical borders.
+	BordersInner = (1 << 9) | (1 << 7), // Draw inner borders.
+	BordersOuter = (1 << 10) | (1 << 8), // Draw outer borders.
+	Borders = (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10),		  // Draw all borders.
 	NoBordersInBody = 1 << 11,					  // [ALPHA] Disable vertical borders in columns Body (borders will always appears in Headers). -> May move to style
 	NoBordersInBodyUntilResize = 1 << 12,		  // [ALPHA] Disable vertical borders in columns Body until hovered for resize (borders will always appears in Headers). -> May move to style
 												  // Sizing Policy (read above for defaults)
@@ -433,79 +433,79 @@ enum class DialogSelection
 enum class Key
 {
 	Tab = 512,
-	LeftArrow,
-	RightArrow,
-	UpArrow,
-	DownArrow,
-	PageUp,
-	PageDown,
-	Home,
-	End,
-	Insert,
-	Delete,
-	Backspace,
-	Space,
-	Enter,
-	Escape,
-	NumEnter,
-	A, // for text edit CTRL+A: select all
-	C, // for text edit CTRL+C: copy
-	V, // for text edit CTRL+V: paste
-	X, // for text edit CTRL+X: cut
-	Y, // for text edit CTRL+Y: redo
-	Z, // for text edit CTRL+Z: undo
+	LeftArrow = 513,
+	RightArrow = 514,
+	UpArrow = 515,
+	DownArrow = 516,
+	PageUp = 517,
+	PageDown = 518,
+	Home = 519,
+	End = 520,
+	Insert = 521,
+	Delete = 522,
+	Backspace = 523,
+	Space = 524,
+	Enter = 525,
+	Escape = 526,
+	NumEnter = 627,
+	A = 546, // for text edit CTRL+A: select all
+	C = 548, // for text edit CTRL+C: copy
+	V = 567, // for text edit CTRL+V: paste
+	X = 569, // for text edit CTRL+X: cut
+	Y = 570, // for text edit CTRL+Y: redo
+	Z = 571, // for text edit CTRL+Z: undo
 };
 
 enum PlotAxis : int32_t
 {
-    // horizontal axes
-    X1 = 0, // enabled by default
-    X2,     // disabled by default
-    X3,     // disabled by default
-    // vertical axes
-    Y1,     // enabled by default
-    Y2,     // disabled by default
-    Y3,     // disabled by default
+	// horizontal axes
+	X1 = 0, // enabled by default
+	X2,		// disabled by default
+	X3,		// disabled by default
+		// vertical axes
+	Y1, // enabled by default
+	Y2, // disabled by default
+	Y3, // disabled by default
 };
 
 enum class PlotFlags : int32_t
 {
-	None          = 0,       // default
-	NoTitle       = 1 << 0,  // the plot title will not be displayed (titles are also hidden if preceeded by double hashes, e.g. "##MyPlot")
-	NoLegend      = 1 << 1,  // the legend will not be displayed
-	NoMouseText   = 1 << 2,  // the mouse position, in plot coordinates, will not be displayed inside of the plot
-	NoInputs      = 1 << 3,  // the user will not be able to interact with the plot
-	NoMenus       = 1 << 4,  // the user will not be able to open context menus
-	NoBoxSelect   = 1 << 5,  // the user will not be able to box-select
-	NoChild       = 1 << 6,  // a child window region will not be used to capture mouse scroll (can boost performance for single ImGui window applications)
-	NoFrame       = 1 << 7,  // the ImGui frame will not be rendered
-	Equal         = 1 << 8,  // x and y axes pairs will be constrained to have the same units/pixel
-	Crosshairs    = 1 << 9,  // the default mouse cursor will be replaced with a crosshair when hovered
-	AntiAliased   = 1 << 10, // plot items will be software anti-aliased (not recommended for high density plots, prefer MSAA)
-	CanvasOnly    = NoTitle | NoLegend | NoMenus | NoBoxSelect | NoMouseText
+	None = 0,			   // default
+	NoTitle = 1 << 0,	   // the plot title will not be displayed (titles are also hidden if preceeded by double hashes, e.g. "##MyPlot")
+	NoLegend = 1 << 1,	   // the legend will not be displayed
+	NoMouseText = 1 << 2,  // the mouse position, in plot coordinates, will not be displayed inside of the plot
+	NoInputs = 1 << 3,	   // the user will not be able to interact with the plot
+	NoMenus = 1 << 4,	   // the user will not be able to open context menus
+	NoBoxSelect = 1 << 5,  // the user will not be able to box-select
+	NoFrame = 1 << 6,	   // the ImGui frame will not be rendered
+	Equal = 1 << 7,		   // x and y axes pairs will be constrained to have the same units/pixel
+	Crosshairs = 1 << 8,   // the default mouse cursor will be replaced with a crosshair when hovered
+	NoChild = 0,		   // Removed in current ImPlot.
+	AntiAliased = 0,	   // Removed in current ImPlot.
+	CanvasOnly = (1 << 0) | (1 << 1) | (1 << 4) | (1 << 5) | (1 << 2)
 };
 
 enum class PlotAxisFlags : int32_t
 {
-	None          = 0,       // default
-	NoLabel       = 1 << 0,  // the axis label will not be displayed (axis labels also hidden if the supplied string name is NULL)
-	NoGridLines   = 1 << 1,  // no grid lines will be displayed
-	NoTickMarks   = 1 << 2,  // no tick marks will be displayed
-	NoTickLabels  = 1 << 3,  // no text labels will be displayed
-	NoInitialFit  = 1 << 4,  // axis will not be initially fit to data extents on the first rendered frame
-	NoMenus       = 1 << 5,  // the user will not be able to open context menus with right-click
-	Opposite      = 1 << 6,  // axis ticks and labels will be rendered on conventionally opposite side (i.e, right or top)
-	Foreground    = 1 << 7,  // grid lines will be displayed in the foreground (i.e. on top of data) in stead of the background
-	LogScale      = 1 << 8,  // a logartithmic (base 10) axis scale will be used (mutually exclusive with Time)
-	Time          = 1 << 9,  // axis will display date/time formatted labels (mutually exclusive with LogScale)
-	Invert        = 1 << 10, // the axis will be inverted
-	AutoFit       = 1 << 11, // axis will be auto-fitting to data extents
-	RangeFit      = 1 << 12, // axis will only fit points if the point is in the visible range of the **orthogonal** axis
-	LockMin       = 1 << 13, // the axis minimum value will be locked when panning/zooming
-	LockMax       = 1 << 14, // the axis maximum value will be locked when panning/zooming
-	Lock          = LockMin | LockMax,
-	NoDecorations = NoLabel | NoGridLines | NoTickMarks | NoTickLabels,
-	AuxDefault    = NoGridLines | Opposite
+	None = 0,			   // default
+	NoLabel = 1 << 0,	   // the axis label will not be displayed (axis labels also hidden if the supplied string name is NULL)
+	NoGridLines = 1 << 1,  // no grid lines will be displayed
+	NoTickMarks = 1 << 2,  // no tick marks will be displayed
+	NoTickLabels = 1 << 3, // no text labels will be displayed
+	NoInitialFit = 1 << 4, // axis will not be initially fit to data extents on the first rendered frame
+	NoMenus = 1 << 5,	   // the user will not be able to open context menus with right-click
+	Opposite = 1 << 8,	   // axis ticks and labels will be rendered on conventionally opposite side (i.e, right or top)
+	Foreground = 1 << 9,   // grid lines will be displayed in the foreground (i.e. on top of data) in stead of the background
+	LogScale = 0,		   // Removed in current ImPlot.
+	Time = 0,			   // Removed in current ImPlot.
+	Invert = 1 << 10,	   // the axis will be inverted
+	AutoFit = 1 << 11,	   // axis will be auto-fitting to data extents
+	RangeFit = 1 << 12,	   // axis will only fit points if the point is in the visible range of the **orthogonal** axis
+	LockMin = 1 << 14,	   // the axis minimum value will be locked when panning/zooming
+	LockMax = 1 << 15,	   // the axis maximum value will be locked when panning/zooming
+	Lock = (1 << 14) | (1 << 15),
+	NoDecorations = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3),
+	AuxDefault = (1 << 1) | (1 << 8)
 };
 
 class GUIManagerCallback
@@ -612,7 +612,7 @@ public:
 
 	int GetMouseButton(int32_t mouseButton);
 
-	int GetMouseWheel();
+	float GetMouseWheel();
 
 	void SetCallback(GUIManagerCallback* callback);
 
@@ -695,6 +695,7 @@ public:
 	float GetFrameHeight();
 	float GetFrameHeightWithSpacing();
 	float GetDpiScale() const;
+	void SetFontSizeBase(float size);
 
 	int GetItemID();
 	void SetFocusID(int id);
@@ -725,11 +726,13 @@ public:
 	// Main
 	bool Button(const char16_t* label, float size_x = 0.0f, float size_y = 0.0f);
 
-	void ImageData(std::shared_ptr<Effekseer::Tool::Image> user_texture_id, float x, float y, float uv0_x = 0.0f, float uv0_y = 0.0f, float uv1_x = 1.0f, float uv1_y = 1.0f);
+	void ImageData(std::shared_ptr<Effekseer::ToolRuntime::Image> user_texture_id, float x, float y, float uv0_x = 0.0f, float uv0_y = 0.0f, float uv1_x = 1.0f, float uv1_y = 1.0f);
 
-	bool ImageButton(std::shared_ptr<Effekseer::Tool::Image> user_texture_id, float x, float y);
+	bool ImageButton(std::shared_ptr<Effekseer::ToolRuntime::Image> user_texture_id, float x, float y);
 
-	bool ImageButtonOriginal(std::shared_ptr<Effekseer::Tool::Image> user_texture_id, float x, float y);
+	bool ImageButtonOriginal(std::shared_ptr<Effekseer::ToolRuntime::Image> user_texture_id, float x, float y);
+
+	bool IconButton(const char16_t* icon, float size = 0.0f);
 
 	bool Checkbox(const char16_t* label, bool* v);
 
@@ -744,7 +747,7 @@ public:
 	void ProgressBar(float fraction, const Vec2& size);
 
 	// Widgets: Combo Box
-	bool BeginCombo(const char16_t* label, const char16_t* preview_value, ComboFlags flags, std::shared_ptr<Effekseer::Tool::Image> user_texture_id = nullptr);
+	bool BeginCombo(const char16_t* label, const char16_t* preview_value, ComboFlags flags, std::shared_ptr<Effekseer::ToolRuntime::Image> user_texture_id = nullptr);
 	void EndCombo(); // only call EndCombo() if BeginCombo() returns true!
 
 	// Drags
@@ -790,17 +793,17 @@ public:
 				 float v_speed = 1.0f,
 				 int v_min = 0,
 				 int v_max = 0,
-				 const char* display_format = "%.0f"); // If v_min >= v_max we have no bound
-	bool DragInt2(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%.0f");
-	bool DragInt3(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%.0f");
-	bool DragInt4(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%.0f");
+				 const char* display_format = "%d"); // If v_min >= v_max we have no bound
+	bool DragInt2(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%d");
+	bool DragInt3(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%d");
+	bool DragInt4(const char16_t* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* display_format = "%d");
 	bool DragIntRange2(const char16_t* label,
 					   int* v_current_min,
 					   int* v_current_max,
 					   float v_speed = 1.0f,
 					   int v_min = 0,
 					   int v_max = 0,
-					   const char* display_format = "%.0f",
+					   const char* display_format = "%d",
 					   const char* display_format_max = nullptr);
 
 	// Drags(Ex)
@@ -875,7 +878,7 @@ public:
 	// Widgets: Selectable / Lists
 	bool Selectable(const char16_t* label, bool selected = false, SelectableFlags flags = SelectableFlags::None);
 
-	bool SelectableContent(const char16_t* idstr, const char16_t* label, bool selected, std::shared_ptr<Effekseer::Tool::Image> thumbnail, float size_x, float size_y, SelectableFlags flags = SelectableFlags::None);
+	bool SelectableContent(const char16_t* idstr, const char16_t* label, bool selected, std::shared_ptr<Effekseer::ToolRuntime::Image> thumbnail, float size_x, float size_y, SelectableFlags flags = SelectableFlags::None);
 
 	// Tooltips
 	void SetTooltip(const char16_t* text);
@@ -985,7 +988,7 @@ public:
 
 	// Dock
 	bool BeginFullscreen(const char16_t* label);
-	bool BeginDock(const char16_t* label, const char16_t* tabLabel, bool* p_open, bool allowClose, WindowFlags extra_flags);
+	bool BeginDock(const char16_t* label, const char16_t* tabLabel, const char16_t* tabDisplayLabel, bool* p_open, bool allowClose, WindowFlags extra_flags);
 	void EndDock();
 	uint32_t BeginDockLayout();
 	void EndDockLayout();

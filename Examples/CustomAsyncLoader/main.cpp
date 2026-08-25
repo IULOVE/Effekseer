@@ -1,8 +1,8 @@
 ﻿// Choose from the following graphics APIs you want to enable
 // グラフィックスAPIを下記から選んで有効にしてください
 #define DEVICE_OPENGL
-//#define DEVICE_DX9
-//#define DEVICE_DX11
+// #define DEVICE_DX9
+// #define DEVICE_DX11
 
 #include <map>
 #include <stdio.h>
@@ -114,9 +114,9 @@ int main(int argc, char** argv)
 		Effekseer::Manager::UpdateParameter updateParameter;
 		efkManager->Update(updateParameter);
 
-		// Execute functions about DirectX
-		// DirectXの処理
-		device.ClearScreen();
+		// Begin to rendering pass
+		// 描画パスの開始
+		device.BeginRenderPass();
 
 		// Update a time
 		// 時間を更新する
@@ -146,8 +146,12 @@ int main(int argc, char** argv)
 		// エフェクトの描画終了処理を行う。
 		efkRenderer->EndRendering();
 
-		// Execute functions about DirectX
-		// DirectXの処理
+		// Finish to rendering pass
+		// 描画パスの終了
+		device.EndRenderPass();
+
+		// Update the display
+		// ディスプレイを更新
 		device.PresentDevice();
 
 		time++;

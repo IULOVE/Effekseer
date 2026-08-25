@@ -133,7 +133,7 @@ void EffectNodeRibbon::BeginRendering(int32_t count, Manager* manager, const Ins
 		m_nodeParameter.DepthParameterPtr = &DepthValues.DepthParameter;
 		m_nodeParameter.BasicParameterPtr = &RendererCommon.BasicParameter;
 		m_nodeParameter.TextureUVTypeParameterPtr = &TextureUVType;
-		m_nodeParameter.IsRightHand = manager->GetCoordinateSystem() == CoordinateSystem::RH;
+		m_nodeParameter.IsRightHand = manager->GetSetting()->GetCoordinateSystem() == CoordinateSystem::RH;
 
 		auto scale = global->EffectGlobalMatrix.GetScale();
 		m_nodeParameter.GlobalScale = (scale.GetX() + scale.GetY() + scale.GetZ()) / 3.0f;
@@ -141,6 +141,8 @@ void EffectNodeRibbon::BeginRendering(int32_t count, Manager* manager, const Ins
 
 		m_nodeParameter.EnableViewOffset = (TranslationParam.TranslationType == ParameterTranslationType_ViewOffset);
 		m_nodeParameter.UserData = GetRenderingUserData();
+		m_nodeParameter.RenderingCoordinateTransform = global->RenderingCoordinateTransform;
+		m_nodeParameter.RenderingTransform = global->RenderingTransform;
 
 		renderer->BeginRendering(m_nodeParameter, count, userData);
 	}
@@ -151,6 +153,8 @@ void EffectNodeRibbon::BeginRenderingGroup(InstanceGroup* group, Manager* manage
 	RibbonRendererRef renderer = manager->GetRibbonRenderer();
 	if (renderer != nullptr)
 	{
+		auto& groupValues = group->rendererValues.ribbon;
+
 		m_instanceParameter.InstanceCount = group->GetInstanceCount();
 		m_instanceParameter.InstanceIndex = 0;
 
@@ -163,8 +167,8 @@ void EffectNodeRibbon::BeginRenderingGroup(InstanceGroup* group, Manager* manage
 
 			if (TimeType == TrailTimeType::FirstParticle)
 			{
-				livingTime = groupFirst->m_LivingTime;
-				livedTime = groupFirst->m_LivedTime;
+				livingTime = groupFirst->livingTime_;
+				livedTime = groupFirst->livedTime_;
 			}
 			else if (TimeType == TrailTimeType::ParticleGroup)
 			{
@@ -176,16 +180,17 @@ void EffectNodeRibbon::BeginRenderingGroup(InstanceGroup* group, Manager* manage
 				assert(false);
 			}
 
-			m_instanceParameter.UV = groupFirst->GetUV(0, livingTime, livedTime);
-			m_instanceParameter.AlphaUV = groupFirst->GetUV(1, livingTime, livedTime);
-			m_instanceParameter.UVDistortionUV = groupFirst->GetUV(2, livingTime, livedTime);
-			m_instanceParameter.BlendUV = groupFirst->GetUV(3, livingTime, livedTime);
-			m_instanceParameter.BlendAlphaUV = groupFirst->GetUV(4, livingTime, livedTime);
-			m_instanceParameter.BlendUVDistortionUV = groupFirst->GetUV(5, livingTime, livedTime);
+			auto& uvAnimationCache = groupValues.UVAnimationCache;
+			m_instanceParameter.UV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 0, livingTime, livedTime);
+			m_instanceParameter.AlphaUV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 1, livingTime, livedTime);
+			m_instanceParameter.UVDistortionUV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 2, livingTime, livedTime);
+			m_instanceParameter.BlendUV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 3, livingTime, livedTime);
+			m_instanceParameter.BlendAlphaUV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 4, livingTime, livedTime);
+			m_instanceParameter.BlendUVDistortionUV = GetTrailUV(uvAnimationCache, groupFirst, RendererCommon, 5, livingTime, livedTime);
 
-			m_instanceParameter.FlipbookIndexAndNextRate = groupFirst->GetFlipbookIndexAndNextRate();
+			m_instanceParameter.FlipbookIndexAndNextRate = GetTrailFlipbookIndexAndNextRate(uvAnimationCache, groupFirst, RendererCommon);
 
-			m_instanceParameter.AlphaThreshold = groupFirst->m_AlphaThreshold;
+			m_instanceParameter.AlphaThreshold = groupFirst->alphaThreshold_;
 
 			if (m_nodeParameter.EnableViewOffset)
 			{
@@ -286,6 +291,8 @@ void EffectNodeRibbon::Rendering(const Instance& instance, const Instance* next_
 		}
 
 		m_instanceParameter.InstanceIndex = index;
+		m_instanceParameter.ParticleTimes[0] = instance.GetNormalizedLivetime();
+		m_instanceParameter.ParticleTimes[1] = instance.livingTime_ / 60.0f;
 		renderer->Rendering(m_nodeParameter, m_instanceParameter, userData);
 	}
 }
@@ -299,13 +306,22 @@ void EffectNodeRibbon::EndRendering(Manager* manager, void* userData)
 	}
 }
 
+void EffectNodeRibbon::InitializeRenderedInstanceGroup(InstanceGroup& instanceGroup, Manager* manager)
+{
+	auto& instValues = instanceGroup.rendererValues.ribbon;
+
+	InitializeTrailUVAnimationCache(instValues.UVAnimationCache);
+}
+
 void EffectNodeRibbon::InitializeRenderedInstance(Instance& instance, InstanceGroup& instanceGroup, Manager* manager)
 {
 	InstanceValues& instValues = instance.rendererValues.ribbon;
 	IRandObject& rand = instance.GetRandObject();
 
 	AllTypeColorFunctions::Init(instValues.allColorValues, rand, RibbonAllColor);
-	instValues._original = AllTypeColorFunctions::Calculate(instValues.allColorValues, RibbonAllColor, instance.m_LivingTime, instance.m_LivedTime);
+	instValues._original = AllTypeColorFunctions::Calculate(instValues.allColorValues, RibbonAllColor, instance.livingTime_, instance.livedTime_);
+
+	ApplyRendererCommonUVHorizontalFlip(instance, rand);
 
 	if (RendererCommon.ColorBindType == BindType::Always || RendererCommon.ColorBindType == BindType::WhenCreating)
 	{
@@ -323,7 +339,7 @@ void EffectNodeRibbon::UpdateRenderedInstance(Instance& instance, InstanceGroup&
 {
 	InstanceValues& instValues = instance.rendererValues.ribbon;
 
-	instValues._original = AllTypeColorFunctions::Calculate(instValues.allColorValues, RibbonAllColor, instance.m_LivingTime, instance.m_LivedTime);
+	instValues._original = AllTypeColorFunctions::Calculate(instValues.allColorValues, RibbonAllColor, instance.livingTime_, instance.livedTime_);
 
 	float fadeAlpha = GetFadeAlpha(instance);
 	if (fadeAlpha != 1.0f)

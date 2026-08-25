@@ -4,12 +4,42 @@
 #include "EffekseerRenderer.DDSTextureLoader.h"
 #include "EffekseerRenderer.PngTextureLoader.h"
 #include "EffekseerRenderer.TGATextureLoader.h"
+#include <limits>
 #endif
 
 namespace EffekseerRenderer
 {
 
 #ifndef __DISABLED_DEFAULT_TEXTURE_LOADER__
+namespace
+{
+bool ShouldUseSRGBFormat(::Effekseer::ColorSpaceType colorSpaceType, ::Effekseer::TextureType textureType)
+{
+	return colorSpaceType == ::Effekseer::ColorSpaceType::Linear && textureType == ::Effekseer::TextureType::Color;
+}
+
+::Effekseer::Backend::TextureFormatType ToSRGBFormat(::Effekseer::Backend::TextureFormatType format)
+{
+	switch (format)
+	{
+	case ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM:
+		return ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB;
+	case ::Effekseer::Backend::TextureFormatType::B8G8R8A8_UNORM:
+		return ::Effekseer::Backend::TextureFormatType::B8G8R8A8_UNORM_SRGB;
+	case ::Effekseer::Backend::TextureFormatType::BC1:
+		return ::Effekseer::Backend::TextureFormatType::BC1_SRGB;
+	case ::Effekseer::Backend::TextureFormatType::BC2:
+		return ::Effekseer::Backend::TextureFormatType::BC2_SRGB;
+	case ::Effekseer::Backend::TextureFormatType::BC3:
+		return ::Effekseer::Backend::TextureFormatType::BC3_SRGB;
+	case ::Effekseer::Backend::TextureFormatType::BC7:
+		return ::Effekseer::Backend::TextureFormatType::BC7_SRGB;
+	default:
+		return format;
+	}
+}
+} // namespace
+
 class TextureLoader : public ::Effekseer::TextureLoader
 {
 	class Impl;
@@ -68,8 +98,11 @@ public:
 			auto isMipEnabled = Effekseer::TextureLoaderHelper::GetIsMipmapEnabled(path16);
 
 			size_t fileSize = reader->GetLength();
+			if (fileSize > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+				return nullptr;
 			std::vector<uint8_t> fileData(fileSize);
-			reader->Read(fileData.data(), fileSize);
+			if (reader->Read(fileData.data(), fileSize) != fileSize)
+				return nullptr;
 
 			auto texture = Load(fileData.data(), static_cast<int32_t>(fileSize), textureType, isMipEnabled);
 			return texture;
@@ -83,7 +116,7 @@ public:
 		auto size_texture = size;
 		auto data_texture = (uint8_t*)data;
 
-		if (size_texture < 4)
+		if (data_texture == nullptr || size_texture < 4)
 		{
 		}
 		else if (data_texture[1] == 'P' && data_texture[2] == 'N' && data_texture[3] == 'G')
@@ -93,7 +126,7 @@ public:
 				// Newbackend
 				{
 					::Effekseer::Backend::TextureFormatType format;
-					if (colorSpaceType_ == ::Effekseer::ColorSpaceType::Linear && textureType == Effekseer::TextureType::Color)
+					if (ShouldUseSRGBFormat(colorSpaceType_, textureType))
 					{
 						format = ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB;
 					}
@@ -123,25 +156,26 @@ public:
 			// Newbackend
 			if (ddsTextureLoader_.Load(data_texture, size_texture))
 			{
-				::Effekseer::Backend::TextureFormatType format;
-				if (colorSpaceType_ == ::Effekseer::ColorSpaceType::Linear && textureType == Effekseer::TextureType::Color)
+				auto backendFormat = ddsTextureLoader_.GetBackendTextureFormat();
+				if (ShouldUseSRGBFormat(colorSpaceType_, textureType))
 				{
-					format = ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB;
-				}
-				else
-				{
-					format = ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM;
+					backendFormat = ToSRGBFormat(backendFormat);
 				}
 
 				::Effekseer::Backend::TextureParameter param;
 				param.Size[0] = ddsTextureLoader_.GetTextures().at(0).Width;
 				param.Size[1] = ddsTextureLoader_.GetTextures().at(0).Height;
 				param.Dimension = 2;
-				param.Format = ddsTextureLoader_.GetBackendTextureFormat();
+				param.Format = backendFormat;
 
 				Effekseer::CustomVector<uint8_t> initialData;
-				initialData.assign(ddsTextureLoader_.GetTextures().at(0).Data.begin(), ddsTextureLoader_.GetTextures().at(0).Data.end());
-				param.MipLevelCount = 1; // TODO : Support nomipmap
+				const auto mipLevelCount = isMipMapEnabled ? ddsTextureLoader_.GetTextures().size() : 1;
+				for (size_t mipLevel = 0; mipLevel < mipLevelCount; mipLevel++)
+				{
+					const auto& mipData = ddsTextureLoader_.GetTextures().at(mipLevel).Data;
+					initialData.insert(initialData.end(), mipData.begin(), mipData.end());
+				}
+				param.MipLevelCount = static_cast<int32_t>(mipLevelCount);
 
 				auto texture = ::Effekseer::MakeRefPtr<::Effekseer::Texture>();
 				texture->SetBackend(graphicsDevice_->CreateTexture(param, initialData));
@@ -155,7 +189,7 @@ public:
 				// Newbackend
 				{
 					::Effekseer::Backend::TextureFormatType format;
-					if (colorSpaceType_ == ::Effekseer::ColorSpaceType::Linear && textureType == Effekseer::TextureType::Color)
+					if (ShouldUseSRGBFormat(colorSpaceType_, textureType))
 					{
 						format = ::Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB;
 					}

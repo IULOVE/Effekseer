@@ -58,6 +58,10 @@ struct ModelRendererVertexConstantBuffer
 	{
 	}
 
+	void SetModelParticleTime(int32_t index, float normalized, float seconds)
+	{
+	}
+
 	float ModelColor[MODEL_COUNT][4];
 
 	float LightDirection[4];
@@ -145,6 +149,10 @@ struct ModelRendererAdvancedVertexConstantBuffer
 		ModelAlphaThreshold[index][0] = value;
 	}
 
+	void SetModelParticleTime(int32_t index, float normalized, float seconds)
+	{
+	}
+
 	float ModelColor[MODEL_COUNT][4];
 
 	float LightDirection[4];
@@ -160,6 +168,7 @@ struct ModelRendererMaterialVertexConstantBuffer
 	Effekseer::Matrix44 ModelMatrix[MODEL_COUNT];
 	float ModelUV[MODEL_COUNT][4];
 	float ModelColor[MODEL_COUNT][4];
+	float ModelParticleTime[MODEL_COUNT][4];
 
 	float LightDirection[4];
 	float LightColor[4];
@@ -197,6 +206,14 @@ struct ModelRendererMaterialVertexConstantBuffer
 	void SetModelAlphaThreshold(int32_t index, float value)
 	{
 	}
+
+	void SetModelParticleTime(int32_t index, float normalized, float seconds)
+	{
+		ModelParticleTime[index][0] = normalized;
+		ModelParticleTime[index][1] = seconds;
+		ModelParticleTime[index][2] = 0.0f;
+		ModelParticleTime[index][3] = 0.0f;
+	}
 };
 
 enum class ModelRendererVertexType
@@ -229,23 +246,25 @@ protected:
 
 	std::vector<Effekseer::Color> colorsSorted_;
 	std::vector<int32_t> timesSorted_;
+	std::vector<std::array<float, 2>> particleTimesSorted_;
 	std::vector<std::array<float, 4>> customData1Sorted_;
 	std::vector<std::array<float, 4>> customData2Sorted_;
 
-	std::vector<Effekseer::Matrix44> m_matrixes;
-	std::vector<Effekseer::RectF> m_uv;
+	std::vector<Effekseer::Matrix44> matrixes_;
+	std::vector<Effekseer::RectF> uv_;
 
-	std::vector<Effekseer::RectF> m_alphaUV;
-	std::vector<Effekseer::RectF> m_uvDistortionUV;
-	std::vector<Effekseer::RectF> m_blendUV;
-	std::vector<Effekseer::RectF> m_blendAlphaUV;
-	std::vector<Effekseer::RectF> m_blendUVDistortionUV;
-	std::vector<float> m_flipbookIndexAndNextRate;
-	std::vector<float> m_alphaThreshold;
-	std::vector<float> m_viewOffsetDistance;
+	std::vector<Effekseer::RectF> alphaUv_;
+	std::vector<Effekseer::RectF> uvDistortionUv_;
+	std::vector<Effekseer::RectF> blendUv_;
+	std::vector<Effekseer::RectF> blendAlphaUv_;
+	std::vector<Effekseer::RectF> blendUvDistortionUv_;
+	std::vector<float> flipbookIndexAndNextRate_;
+	std::vector<float> alphaThreshold_;
+	std::vector<float> viewOffsetDistance_;
 
-	std::vector<Effekseer::Color> m_colors;
-	std::vector<int32_t> m_times;
+	std::vector<Effekseer::Color> colors_;
+	std::vector<int32_t> times_;
+	std::vector<std::array<float, 2>> particleTimes_;
 	std::vector<std::array<float, 4>> customData1_;
 	std::vector<std::array<float, 4>> customData2_;
 
@@ -319,16 +338,15 @@ protected:
 	{
 		if (param.DepthParameterPtr->ZSort != Effekseer::ZSortType::None)
 		{
-			keyValues_.resize(m_matrixes.size());
+			keyValues_.resize(matrixes_.size());
+			const auto frontDirection = NormalizeCameraFrontForRenderingSpace(
+				Effekseer::SIMD::Vec3f(renderer->GetCameraFrontDirection()),
+				param.IsRightHand,
+				param.RenderingCoordinateTransform);
+
 			for (size_t i = 0; i < keyValues_.size(); i++)
 			{
-				efkVector3D t(m_matrixes[i].Values[3][0], m_matrixes[i].Values[3][1], m_matrixes[i].Values[3][2]);
-
-				auto frontDirection = renderer->GetCameraFrontDirection();
-				if (!param.IsRightHand)
-				{
-					frontDirection = -frontDirection;
-				}
+				efkVector3D t(matrixes_[i].Values[3][0], matrixes_[i].Values[3][1], matrixes_[i].Values[3][2]);
 
 				keyValues_[i].Key = Effekseer::SIMD::Vec3f::Dot(t, frontDirection);
 				keyValues_[i].Value = static_cast<int32_t>(i);
@@ -345,43 +363,45 @@ protected:
 						  { return a.Key > b.Key; });
 			}
 
-			matrixesSorted_.resize(m_matrixes.size());
-			uvSorted_.resize(m_matrixes.size());
-			alphaUVSorted_.resize(m_matrixes.size());
-			uvDistortionUVSorted_.resize(m_matrixes.size());
-			blendUVSorted_.resize(m_matrixes.size());
-			blendAlphaUVSorted_.resize(m_matrixes.size());
-			blendUVDistortionUVSorted_.resize(m_matrixes.size());
-			flipbookIndexAndNextRateSorted_.resize(m_matrixes.size());
-			alphaThresholdSorted_.resize(m_matrixes.size());
-			viewOffsetDistanceSorted_.resize(m_matrixes.size());
-			colorsSorted_.resize(m_matrixes.size());
-			timesSorted_.resize(m_matrixes.size());
+			matrixesSorted_.resize(matrixes_.size());
+			uvSorted_.resize(matrixes_.size());
+			alphaUVSorted_.resize(matrixes_.size());
+			uvDistortionUVSorted_.resize(matrixes_.size());
+			blendUVSorted_.resize(matrixes_.size());
+			blendAlphaUVSorted_.resize(matrixes_.size());
+			blendUVDistortionUVSorted_.resize(matrixes_.size());
+			flipbookIndexAndNextRateSorted_.resize(matrixes_.size());
+			alphaThresholdSorted_.resize(matrixes_.size());
+			viewOffsetDistanceSorted_.resize(matrixes_.size());
+			colorsSorted_.resize(matrixes_.size());
+			timesSorted_.resize(matrixes_.size());
+			particleTimesSorted_.resize(matrixes_.size());
 
 			if (customData1Count_ > 0)
 			{
-				customData1Sorted_.resize(m_matrixes.size());
+				customData1Sorted_.resize(matrixes_.size());
 			}
 
 			if (customData2Count_ > 0)
 			{
-				customData2Sorted_.resize(m_matrixes.size());
+				customData2Sorted_.resize(matrixes_.size());
 			}
 
 			for (size_t i = 0; i < keyValues_.size(); i++)
 			{
-				matrixesSorted_[keyValues_[i].Value] = m_matrixes[i];
-				uvSorted_[keyValues_[i].Value] = m_uv[i];
-				alphaUVSorted_[keyValues_[i].Value] = m_alphaUV[i];
-				uvDistortionUVSorted_[keyValues_[i].Value] = m_uvDistortionUV[i];
-				blendUVSorted_[keyValues_[i].Value] = m_blendUV[i];
-				blendAlphaUVSorted_[keyValues_[i].Value] = m_blendAlphaUV[i];
-				blendUVDistortionUVSorted_[keyValues_[i].Value] = m_blendUVDistortionUV[i];
-				flipbookIndexAndNextRateSorted_[keyValues_[i].Value] = m_flipbookIndexAndNextRate[i];
-				alphaThresholdSorted_[keyValues_[i].Value] = m_alphaThreshold[i];
-				viewOffsetDistanceSorted_[keyValues_[i].Value] = m_viewOffsetDistance[i];
-				colorsSorted_[keyValues_[i].Value] = m_colors[i];
-				timesSorted_[keyValues_[i].Value] = m_times[i];
+				matrixesSorted_[keyValues_[i].Value] = matrixes_[i];
+				uvSorted_[keyValues_[i].Value] = uv_[i];
+				alphaUVSorted_[keyValues_[i].Value] = alphaUv_[i];
+				uvDistortionUVSorted_[keyValues_[i].Value] = uvDistortionUv_[i];
+				blendUVSorted_[keyValues_[i].Value] = blendUv_[i];
+				blendAlphaUVSorted_[keyValues_[i].Value] = blendAlphaUv_[i];
+				blendUVDistortionUVSorted_[keyValues_[i].Value] = blendUvDistortionUv_[i];
+				flipbookIndexAndNextRateSorted_[keyValues_[i].Value] = flipbookIndexAndNextRate_[i];
+				alphaThresholdSorted_[keyValues_[i].Value] = alphaThreshold_[i];
+				viewOffsetDistanceSorted_[keyValues_[i].Value] = viewOffsetDistance_[i];
+				colorsSorted_[keyValues_[i].Value] = colors_[i];
+				timesSorted_[keyValues_[i].Value] = times_[i];
+				particleTimesSorted_[keyValues_[i].Value] = particleTimes_[i];
 			}
 
 			if (customData1Count_ > 0)
@@ -400,20 +420,21 @@ protected:
 				}
 			}
 
-			m_matrixes = matrixesSorted_;
-			m_uv = uvSorted_;
-			m_alphaUV = alphaUVSorted_;
-			m_uvDistortionUV = uvDistortionUVSorted_;
-			m_blendUV = blendUVSorted_;
-			m_blendAlphaUV = blendAlphaUVSorted_;
-			m_blendUVDistortionUV = blendUVDistortionUVSorted_;
-			m_flipbookIndexAndNextRate = flipbookIndexAndNextRateSorted_;
-			m_alphaThreshold = alphaThresholdSorted_;
-			m_viewOffsetDistance = viewOffsetDistanceSorted_;
-			m_colors = colorsSorted_;
-			m_times = timesSorted_;
-			customData1_ = customData1Sorted_;
-			customData2_ = customData2Sorted_;
+			matrixes_.swap(matrixesSorted_);
+			uv_.swap(uvSorted_);
+			alphaUv_.swap(alphaUVSorted_);
+			uvDistortionUv_.swap(uvDistortionUVSorted_);
+			blendUv_.swap(blendUVSorted_);
+			blendAlphaUv_.swap(blendAlphaUVSorted_);
+			blendUvDistortionUv_.swap(blendUVDistortionUVSorted_);
+			flipbookIndexAndNextRate_.swap(flipbookIndexAndNextRateSorted_);
+			alphaThreshold_.swap(alphaThresholdSorted_);
+			viewOffsetDistance_.swap(viewOffsetDistanceSorted_);
+			colors_.swap(colorsSorted_);
+			times_.swap(timesSorted_);
+			particleTimes_.swap(particleTimesSorted_);
+			customData1_.swap(customData1Sorted_);
+			customData2_.swap(customData2Sorted_);
 		}
 	}
 
@@ -456,7 +477,7 @@ protected:
 		predefined_uniforms[3] = param.LocalTime;
 
 		// vs
-		int32_t vsOffset = sizeof(Effekseer::Matrix44) + (sizeof(Effekseer::Matrix44) + sizeof(float) * 4 * 2) * InstanceCount;
+		int32_t vsOffset = sizeof(Effekseer::Matrix44) + (sizeof(Effekseer::Matrix44) + sizeof(float) * 4 * 3) * InstanceCount;
 
 		renderer->SetVertexBufferToShader(uvInversedMaterial.data(), sizeof(float) * 4, vsOffset);
 		vsOffset += (sizeof(float) * 4);
@@ -654,14 +675,12 @@ protected:
 				pcb->SetModelUVDistortionParameter(param.BasicParameterPtr->UVDistortionIntensity, param.BasicParameterPtr->BlendUVDistortionIntensity, {uvInversed[0], uvInversed[1]});
 				pcb->SetModelBlendTextureParameter(static_cast<float>(param.BasicParameterPtr->TextureBlendType));
 
-				::Effekseer::Vector3D CameraFront = renderer->GetCameraFrontDirection();
+				const auto cameraFront = NormalizeCameraFrontForRenderingSpace(
+					Effekseer::SIMD::Vec3f(renderer->GetCameraFrontDirection()),
+					param.IsRightHand,
+					param.RenderingCoordinateTransform);
 
-				if (!param.IsRightHand)
-				{
-					CameraFront = -CameraFront;
-				}
-
-				pcb->SetCameraFrontDirection(-CameraFront.X, -CameraFront.Y, -CameraFront.Z);
+				pcb->SetCameraFrontDirection(-cameraFront.GetX(), -cameraFront.GetY(), -cameraFront.GetZ());
 				pcb->SetFalloffParameter(
 					static_cast<float>(param.EnableFalloff),
 					static_cast<float>(param.FalloffParam.ColorBlendType),
@@ -711,20 +730,39 @@ public:
 	{
 		keyValues_.clear();
 
-		m_matrixes.clear();
-		m_uv.clear();
-		m_alphaUV.clear();
-		m_uvDistortionUV.clear();
-		m_blendUV.clear();
-		m_blendAlphaUV.clear();
-		m_blendUVDistortionUV.clear();
-		m_flipbookIndexAndNextRate.clear();
-		m_alphaThreshold.clear();
-		m_viewOffsetDistance.clear();
-		m_colors.clear();
-		m_times.clear();
+		matrixes_.clear();
+		uv_.clear();
+		alphaUv_.clear();
+		uvDistortionUv_.clear();
+		blendUv_.clear();
+		blendAlphaUv_.clear();
+		blendUvDistortionUv_.clear();
+		flipbookIndexAndNextRate_.clear();
+		alphaThreshold_.clear();
+		viewOffsetDistance_.clear();
+		colors_.clear();
+		times_.clear();
+		particleTimes_.clear();
 		customData1_.clear();
 		customData2_.clear();
+
+		if (count > 0)
+		{
+			const auto instanceCount = static_cast<size_t>(count);
+			matrixes_.reserve(instanceCount);
+			uv_.reserve(instanceCount);
+			alphaUv_.reserve(instanceCount);
+			uvDistortionUv_.reserve(instanceCount);
+			blendUv_.reserve(instanceCount);
+			blendAlphaUv_.reserve(instanceCount);
+			blendUvDistortionUv_.reserve(instanceCount);
+			flipbookIndexAndNextRate_.reserve(instanceCount);
+			alphaThreshold_.reserve(instanceCount);
+			viewOffsetDistance_.reserve(instanceCount);
+			colors_.reserve(instanceCount);
+			times_.reserve(instanceCount);
+			particleTimes_.reserve(instanceCount);
+		}
 
 		matrixesSorted_.clear();
 		uvSorted_.clear();
@@ -738,6 +776,7 @@ public:
 		viewOffsetDistanceSorted_.clear();
 		colorsSorted_.clear();
 		timesSorted_.clear();
+		particleTimesSorted_.clear();
 		customData1Sorted_.clear();
 		customData2Sorted_.clear();
 
@@ -756,6 +795,16 @@ public:
 			customData2Count_ = 0;
 		}
 
+		if (count > 0 && customData1Count_ > 0)
+		{
+			customData1_.reserve(static_cast<size_t>(count));
+		}
+
+		if (count > 0 && customData2Count_ > 0)
+		{
+			customData2_.reserve(static_cast<size_t>(count));
+		}
+
 		renderer->GetStandardRenderer()->ResetAndRenderingIfRequired();
 
 		collector_ = ShaderParameterCollector();
@@ -767,10 +816,16 @@ public:
 	{
 		::Effekseer::BillboardType btype = parameter.Billboard;
 		Effekseer::SIMD::Mat44f mat44;
+		auto baseMatrix = instanceParameter.SRTMatrix43;
+
+		if (parameter.IsExternalMode)
+		{
+			baseMatrix *= parameter.ExternalModelTransform;
+		}
 
 		if (btype == ::Effekseer::BillboardType::Fixed)
 		{
-			mat44 = instanceParameter.SRTMatrix43;
+			mat44 = baseMatrix;
 		}
 		else
 		{
@@ -779,7 +834,9 @@ public:
 			Effekseer::SIMD::Vec3f R;
 			Effekseer::SIMD::Vec3f F;
 
-			CalcBillboard(btype, mat43, s, R, F, instanceParameter.SRTMatrix43, renderer->GetCameraFrontDirection(), instanceParameter.Direction);
+			const auto cameraFrontForRendering = TransformCameraFrontToEffectSpace(
+				::Effekseer::SIMD::Vec3f(renderer->GetCameraFrontDirection()), parameter.RenderingCoordinateTransform);
+			CalcBillboard(btype, mat43, s, R, F, baseMatrix, cameraFrontForRendering, instanceParameter.Direction);
 
 			mat44 = ::Effekseer::SIMD::Mat43f::Scaling(s) * mat43;
 		}
@@ -789,23 +846,29 @@ public:
 			mat44 = Effekseer::SIMD::Mat44f::Scaling(::Effekseer::SIMD::Vec3f(parameter.Magnification)) * mat44;
 		}
 
+		if (parameter.RenderingTransform.IsEnabled)
+		{
+			mat44 *= Effekseer::SIMD::Mat44f(parameter.RenderingTransform.Transform);
+		}
+
 		if (!parameter.IsRightHand)
 		{
 			mat44 = Effekseer::SIMD::Mat44f::Scaling(1.0f, 1.0f, -1.0f) * mat44;
 		}
 
-		m_matrixes.push_back(ToStruct(mat44));
-		m_uv.push_back(instanceParameter.UV);
-		m_alphaUV.push_back(instanceParameter.AlphaUV);
-		m_uvDistortionUV.push_back(instanceParameter.UVDistortionUV);
-		m_blendUV.push_back(instanceParameter.BlendUV);
-		m_blendAlphaUV.push_back(instanceParameter.BlendAlphaUV);
-		m_blendUVDistortionUV.push_back(instanceParameter.BlendUVDistortionUV);
-		m_flipbookIndexAndNextRate.push_back(instanceParameter.FlipbookIndexAndNextRate);
-		m_alphaThreshold.push_back(instanceParameter.AlphaThreshold);
-		m_viewOffsetDistance.push_back(instanceParameter.ViewOffsetDistance);
-		m_colors.push_back(instanceParameter.AllColor);
-		m_times.push_back(instanceParameter.Time);
+		matrixes_.push_back(ToStruct(mat44));
+		uv_.push_back(instanceParameter.UV);
+		alphaUv_.push_back(instanceParameter.AlphaUV);
+		uvDistortionUv_.push_back(instanceParameter.UVDistortionUV);
+		blendUv_.push_back(instanceParameter.BlendUV);
+		blendAlphaUv_.push_back(instanceParameter.BlendAlphaUV);
+		blendUvDistortionUv_.push_back(instanceParameter.BlendUVDistortionUV);
+		flipbookIndexAndNextRate_.push_back(instanceParameter.FlipbookIndexAndNextRate);
+		alphaThreshold_.push_back(instanceParameter.AlphaThreshold);
+		viewOffsetDistance_.push_back(instanceParameter.ViewOffsetDistance);
+		colors_.push_back(instanceParameter.AllColor);
+		times_.push_back(instanceParameter.Time);
+		particleTimes_.push_back({instanceParameter.ParticleTimes[0], instanceParameter.ParticleTimes[1]});
 
 		if (customData1Count_ > 0)
 		{
@@ -831,9 +894,9 @@ public:
 					   const efkModelNodeParam& param,
 					   void* userData)
 	{
-		if (m_matrixes.size() == 0)
+		if (matrixes_.size() == 0)
 			return;
-		if (param.ModelIndex < 0)
+		if (!param.IsExternalMode && param.ModelIndex < 0)
 			return;
 
 		if (renderer->GetExternalShaderSettings() == nullptr)
@@ -898,14 +961,19 @@ public:
 					int32_t renderPassInd,
 					void* userData)
 	{
-		if (m_matrixes.size() == 0)
+		if (matrixes_.size() == 0)
 			return;
-		if (param.ModelIndex < 0)
+
+		if (!param.IsExternalMode && param.ModelIndex < 0)
 			return;
 
 		::Effekseer::RefPtr<MODEL> model;
 
-		if (param.IsProceduralMode)
+		if (param.IsExternalMode)
+		{
+			model = param.ExternalModel;
+		}
+		else if (param.IsProceduralMode)
 		{
 			model = param.EffectPointer->GetProceduralModel(param.ModelIndex);
 		}
@@ -1032,7 +1100,7 @@ public:
 		state.DepthTest = param.ZTest;
 		state.DepthWrite = param.ZWrite;
 		state.AlphaBlend = param.BasicParameterPtr->AlphaBlend;
-		state.CullingType = param.Culling;
+		state.CullingType = ::Effekseer::GetTransformedCullingType(param.Culling, param.RenderingTransform);
 
 		// TODO : refactor in 1.7
 		if (renderer->GetExternalShaderSettings() != nullptr)
@@ -1089,10 +1157,10 @@ public:
 		renderer->GetImpl()->CurrentHandleUserData = userData;
 
 		// Check time
-		auto stTime0 = m_times[0] % model->GetFrameCount();
+		auto stTime0 = times_[0] % model->GetFrameCount();
 		auto isTimeSame = true;
 
-		for (auto t : m_times)
+		for (auto t : times_)
 		{
 			t = t % model->GetFrameCount();
 			if (t != stTime0)
@@ -1122,57 +1190,61 @@ public:
 
 			renderer->SetLayout(shader_);
 
-			for (size_t loop = 0; loop < m_matrixes.size();)
+			for (size_t loop = 0; loop < matrixes_.size();)
 			{
-				int32_t modelCount = Effekseer::Min(static_cast<int32_t>(m_matrixes.size()) - (int32_t)loop, InstanceCount);
+				int32_t modelCount = Effekseer::Min(static_cast<int32_t>(matrixes_.size()) - (int32_t)loop, InstanceCount);
 
 				for (int32_t num = 0; num < modelCount; num++)
 				{
-					vcb->ModelMatrix[num] = m_matrixes[loop + num];
+					vcb->ModelMatrix[num] = matrixes_[loop + num];
 
 					// DepthParameter
 					::Effekseer::SIMD::Mat44f modelMatrix = vcb->ModelMatrix[num];
 
 					if (param.EnableViewOffset)
 					{
-						ApplyViewOffset(modelMatrix, renderer->GetCameraMatrix(), m_viewOffsetDistance[loop + num]);
+						ApplyViewOffset(modelMatrix, renderer->GetCameraMatrix(), viewOffsetDistance_[loop + num]);
 					}
 
 					ApplyDepthParameters(modelMatrix,
-										 renderer->GetCameraFrontDirection(),
+										 NormalizeCameraFrontForRenderingSpace(
+											 Effekseer::SIMD::Vec3f(renderer->GetCameraFrontDirection()),
+											 param.IsRightHand,
+											 param.RenderingCoordinateTransform),
 										 renderer->GetCameraPosition(),
 										 param.DepthParameterPtr,
 										 param.IsRightHand);
 					vcb->ModelMatrix[num] = ToStruct(modelMatrix);
 
-					vcb->ModelUV[num][0] = m_uv[loop + num].X;
-					vcb->ModelUV[num][1] = m_uv[loop + num].Y;
-					vcb->ModelUV[num][2] = m_uv[loop + num].Width;
-					vcb->ModelUV[num][3] = m_uv[loop + num].Height;
+					vcb->ModelUV[num][0] = uv_[loop + num].X;
+					vcb->ModelUV[num][1] = uv_[loop + num].Y;
+					vcb->ModelUV[num][2] = uv_[loop + num].Width;
+					vcb->ModelUV[num][3] = uv_[loop + num].Height;
 
 					vcb->SetModelAlphaUV(
-						num, m_alphaUV[loop + num].X, m_alphaUV[loop + num].Y, m_alphaUV[loop + num].Width, m_alphaUV[loop + num].Height);
+						num, alphaUv_[loop + num].X, alphaUv_[loop + num].Y, alphaUv_[loop + num].Width, alphaUv_[loop + num].Height);
 					vcb->SetModelUVDistortionUV(num,
-												m_uvDistortionUV[loop + num].X,
-												m_uvDistortionUV[loop + num].Y,
-												m_uvDistortionUV[loop + num].Width,
-												m_uvDistortionUV[loop + num].Height);
+												uvDistortionUv_[loop + num].X,
+												uvDistortionUv_[loop + num].Y,
+												uvDistortionUv_[loop + num].Width,
+												uvDistortionUv_[loop + num].Height);
 					vcb->SetModelBlendUV(
-						num, m_blendUV[loop + num].X, m_blendUV[loop + num].Y, m_blendUV[loop + num].Width, m_blendUV[loop + num].Height);
+						num, blendUv_[loop + num].X, blendUv_[loop + num].Y, blendUv_[loop + num].Width, blendUv_[loop + num].Height);
 					vcb->SetModelBlendAlphaUV(num,
-											  m_blendAlphaUV[loop + num].X,
-											  m_blendAlphaUV[loop + num].Y,
-											  m_blendAlphaUV[loop + num].Width,
-											  m_blendAlphaUV[loop + num].Height);
+											  blendAlphaUv_[loop + num].X,
+											  blendAlphaUv_[loop + num].Y,
+											  blendAlphaUv_[loop + num].Width,
+											  blendAlphaUv_[loop + num].Height);
 					vcb->SetModelBlendUVDistortionUV(num,
-													 m_blendUVDistortionUV[loop + num].X,
-													 m_blendUVDistortionUV[loop + num].Y,
-													 m_blendUVDistortionUV[loop + num].Width,
-													 m_blendUVDistortionUV[loop + num].Height);
-					vcb->SetModelFlipbookIndexAndNextRate(num, m_flipbookIndexAndNextRate[loop + num]);
-					vcb->SetModelAlphaThreshold(num, m_alphaThreshold[loop + num]);
+													 blendUvDistortionUv_[loop + num].X,
+													 blendUvDistortionUv_[loop + num].Y,
+													 blendUvDistortionUv_[loop + num].Width,
+													 blendUvDistortionUv_[loop + num].Height);
+					vcb->SetModelFlipbookIndexAndNextRate(num, flipbookIndexAndNextRate_[loop + num]);
+					vcb->SetModelAlphaThreshold(num, alphaThreshold_[loop + num]);
+					vcb->SetModelParticleTime(num, particleTimes_[loop + num][0], particleTimes_[loop + num][1]);
 
-					ColorToFloat4(m_colors[loop + num], vcb->ModelColor[num]);
+					ColorToFloat4(colors_[loop + num], vcb->ModelColor[num]);
 
 					if (cutomData1Ptr != nullptr)
 					{
@@ -1207,9 +1279,9 @@ public:
 		}
 		else
 		{
-			for (size_t loop = 0; loop < m_matrixes.size();)
+			for (size_t loop = 0; loop < matrixes_.size();)
 			{
-				auto stTime = m_times[loop] % model->GetFrameCount();
+				auto stTime = times_[loop] % model->GetFrameCount();
 				// auto& imodel = model->InternalModels[stTime];
 
 				// Invalid unless layout is set after buffer
@@ -1228,37 +1300,41 @@ public:
 
 				renderer->SetLayout(shader_);
 
-				vcb->ModelMatrix[0] = m_matrixes[loop];
-				vcb->ModelUV[0][0] = m_uv[loop].X;
-				vcb->ModelUV[0][1] = m_uv[loop].Y;
-				vcb->ModelUV[0][2] = m_uv[loop].Width;
-				vcb->ModelUV[0][3] = m_uv[loop].Height;
+				vcb->ModelMatrix[0] = matrixes_[loop];
+				vcb->ModelUV[0][0] = uv_[loop].X;
+				vcb->ModelUV[0][1] = uv_[loop].Y;
+				vcb->ModelUV[0][2] = uv_[loop].Width;
+				vcb->ModelUV[0][3] = uv_[loop].Height;
+				vcb->SetModelParticleTime(0, particleTimes_[loop][0], particleTimes_[loop][1]);
 
-				vcb->SetModelAlphaUV(0, m_alphaUV[loop].X, m_alphaUV[loop].Y, m_alphaUV[loop].Width, m_alphaUV[loop].Height);
+				vcb->SetModelAlphaUV(0, alphaUv_[loop].X, alphaUv_[loop].Y, alphaUv_[loop].Width, alphaUv_[loop].Height);
 				vcb->SetModelUVDistortionUV(
-					0, m_uvDistortionUV[loop].X, m_uvDistortionUV[loop].Y, m_uvDistortionUV[loop].Width, m_uvDistortionUV[loop].Height);
-				vcb->SetModelBlendUV(0, m_blendUV[loop].X, m_blendUV[loop].Y, m_blendUV[loop].Width, m_blendUV[loop].Height);
+					0, uvDistortionUv_[loop].X, uvDistortionUv_[loop].Y, uvDistortionUv_[loop].Width, uvDistortionUv_[loop].Height);
+				vcb->SetModelBlendUV(0, blendUv_[loop].X, blendUv_[loop].Y, blendUv_[loop].Width, blendUv_[loop].Height);
 				vcb->SetModelBlendAlphaUV(
-					0, m_blendAlphaUV[loop].X, m_blendAlphaUV[loop].Y, m_blendAlphaUV[loop].Width, m_blendAlphaUV[loop].Height);
+					0, blendAlphaUv_[loop].X, blendAlphaUv_[loop].Y, blendAlphaUv_[loop].Width, blendAlphaUv_[loop].Height);
 				vcb->SetModelBlendUVDistortionUV(
-					0, m_blendUVDistortionUV[loop].X, m_blendUVDistortionUV[loop].Y, m_blendUVDistortionUV[loop].Width, m_blendUVDistortionUV[loop].Height);
-				vcb->SetModelFlipbookIndexAndNextRate(0, m_flipbookIndexAndNextRate[loop]);
-				vcb->SetModelAlphaThreshold(0, m_alphaThreshold[loop]);
+					0, blendUvDistortionUv_[loop].X, blendUvDistortionUv_[loop].Y, blendUvDistortionUv_[loop].Width, blendUvDistortionUv_[loop].Height);
+				vcb->SetModelFlipbookIndexAndNextRate(0, flipbookIndexAndNextRate_[loop]);
+				vcb->SetModelAlphaThreshold(0, alphaThreshold_[loop]);
 
 				// DepthParameters
 				::Effekseer::SIMD::Mat44f modelMatrix = vcb->ModelMatrix[0];
 				if (param.EnableViewOffset == true)
 				{
-					ApplyViewOffset(modelMatrix, renderer->GetCameraMatrix(), m_viewOffsetDistance[0]);
+					ApplyViewOffset(modelMatrix, renderer->GetCameraMatrix(), viewOffsetDistance_[0]);
 				}
 
 				ApplyDepthParameters(modelMatrix,
-									 renderer->GetCameraFrontDirection(),
+									 NormalizeCameraFrontForRenderingSpace(
+										 Effekseer::SIMD::Vec3f(renderer->GetCameraFrontDirection()),
+										 param.IsRightHand,
+										 param.RenderingCoordinateTransform),
 									 renderer->GetCameraPosition(),
 									 param.DepthParameterPtr,
 									 param.IsRightHand);
 				vcb->ModelMatrix[0] = ToStruct(modelMatrix);
-				ColorToFloat4(m_colors[loop], vcb->ModelColor[0]);
+				ColorToFloat4(colors_[loop], vcb->ModelColor[0]);
 
 				if (cutomData1Ptr != nullptr)
 				{

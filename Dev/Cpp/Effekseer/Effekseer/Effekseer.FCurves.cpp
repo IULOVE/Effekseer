@@ -49,7 +49,14 @@ int32_t FCurve::Load(const void* data, int32_t version)
 	memcpy(&count, p, sizeof(int32_t));
 	p += sizeof(int32_t);
 	size += sizeof(int32_t);
+	if (count < 0 || count > 65536 || freq_ <= 0)
+	{
+		keys_.clear();
+		return size;
+	}
 
+	keys_.clear();
+	keys_.reserve(static_cast<size_t>(count));
 	for (int32_t i = 0; i < count; i++)
 	{
 		float value = 0;
@@ -126,7 +133,7 @@ float FCurve::GetValue(float living, float life, FCurveTimelineType type) const
 	{
 		return keys_[keys_.size() - 1];
 	}
-	else if (ind == keys_.size() - 1)
+	else if (ind == keys_.size() - 2)
 	{
 		float subF = (float)(len_ - ind * freq_);
 		float subV = keys_[ind + 1] - keys_[ind];

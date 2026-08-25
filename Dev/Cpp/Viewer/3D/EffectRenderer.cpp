@@ -1,7 +1,9 @@
 #include "EffectRenderer.h"
+#include "../Graphics/GraphicsDevice.h"
 #include "../Sound/SoundDevice.h"
 #include "Effect.h"
 #include "EffectSetting.h"
+#include <Effekseer/Effekseer.ExternalModel.h>
 
 #ifdef _WIN32
 #include "../Graphics/Platform/DX11/efk.GraphicsDX11.h"
@@ -49,121 +51,12 @@ namespace PostEffect_Overdraw_PS
 #include <EffekseerRendererGL/ShaderHeader/model_unlit_vs.h>
 #include <EffekseerRendererGL/ShaderHeader/sprite_unlit_vs.h>
 
-#include "../GUI/RenderImage.h"
+#include <EffekseerToolRuntime/DepthRendering.h>
 
 namespace Effekseer
 {
 namespace Tool
 {
-
-bool GroundRenderer::Initialize(Effekseer::RefPtr<Effekseer::Backend::GraphicsDevice> graphicsDevice)
-{
-	groudMeshRenderer_ = Effekseer::Tool::StaticMeshRenderer::Create(graphicsDevice);
-
-	if (groudMeshRenderer_ == nullptr)
-	{
-		return false;
-	}
-
-	Effekseer::CustomVector<Effekseer::Tool::StaticMeshVertex> vbData(4);
-	Effekseer::CustomVector<int32_t> ibData = {0, 1, 2, 0, 2, 3};
-
-	auto groudMesh = Effekseer::Tool::StaticMesh::Create(graphicsDevice, vbData, ibData, true);
-
-	// Create checker patterns
-	Effekseer::Backend::TextureParameter texParams;
-	texParams.Format = Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM;
-	texParams.Size = {128, 128};
-
-	Effekseer::CustomVector<uint8_t> initialData;
-	initialData.resize(texParams.Size[0] * texParams.Size[1] * 4);
-
-	for (size_t i = 0; i < initialData.size() / 4; i++)
-	{
-		const size_t x = i % texParams.Size[0] * 2 / texParams.Size[0];
-		const size_t y = i / texParams.Size[1] * 2 / texParams.Size[1];
-		if (x ^ y == 0)
-		{
-			initialData[i * 4 + 0] = 90;
-			initialData[i * 4 + 1] = 90;
-			initialData[i * 4 + 2] = 90;
-			initialData[i * 4 + 3] = 255;
-		}
-		else
-		{
-			initialData[i * 4 + 0] = 60;
-			initialData[i * 4 + 1] = 60;
-			initialData[i * 4 + 2] = 60;
-			initialData[i * 4 + 3] = 255;
-		}
-	}
-	groudMesh->Texture = graphicsDevice->CreateTexture(texParams, initialData);
-
-	groudMeshRenderer_->SetStaticMesh(groudMesh);
-
-	UpdateGround();
-
-	return true;
-}
-
-void GroundRenderer::SetExtent(int32_t extent)
-{
-	if (GroundExtent == extent)
-	{
-		return;
-	}
-
-	GroundExtent = extent;
-	UpdateGround();
-}
-
-void GroundRenderer::UpdateGround()
-{
-	std::array<Effekseer::Tool::StaticMeshVertex, 4> vbData;
-
-	vbData[0].Pos = {-(float)GroundExtent, 0.0f, -(float)GroundExtent};
-	vbData[0].VColor = {255, 255, 255, 255};
-	vbData[0].UV = {0.0f, 0.0f};
-	vbData[1].Pos = {(float)GroundExtent, 0.0f, -(float)GroundExtent};
-	vbData[1].VColor = {255, 255, 255, 255};
-	vbData[1].UV = {(float)GroundExtent, 0.0f};
-	vbData[2].Pos = {(float)GroundExtent, 0.0f, (float)GroundExtent};
-	vbData[2].VColor = {255, 255, 255, 255};
-	vbData[2].UV = {(float)GroundExtent, (float)GroundExtent};
-	vbData[3].Pos = {-(float)GroundExtent, 0.0f, (float)GroundExtent};
-	vbData[3].VColor = {255, 255, 255, 255};
-	vbData[3].UV = {0.0f, (float)GroundExtent};
-
-	for (auto& vb : vbData)
-	{
-		vb.Normal = {0.0f, 1.0f, 0.0f};
-	}
-
-	groudMeshRenderer_->GetStaticMesh()->GetVertexBuffer()->UpdateData(
-		vbData.data(), static_cast<int32_t>(vbData.size() * sizeof(Effekseer::Tool::StaticMeshVertex)), 0);
-}
-
-void GroundRenderer::Render(EffekseerRenderer::RendererRef renderer)
-{
-	Effekseer::Tool::RendererParameter param{};
-	param.CameraMatrix = renderer->GetCameraMatrix();
-	param.ProjectionMatrix = renderer->GetProjectionMatrix();
-	param.WorldMatrix.Translation(0.0f, GroundHeight, 0.0f);
-	param.DirectionalLightDirection = renderer->GetLightDirection().ToFloat4();
-	param.DirectionalLightColor = renderer->GetLightColor().ToFloat4();
-	param.AmbientLightColor = renderer->GetLightAmbientColor().ToFloat4();
-	groudMeshRenderer_->Render(param);
-}
-
-std::shared_ptr<GroundRenderer> GroundRenderer::Create(Effekseer::RefPtr<Effekseer::Backend::GraphicsDevice> graphicsDevice)
-{
-	auto ret = std::make_shared<GroundRenderer>();
-	if (ret->Initialize(graphicsDevice))
-	{
-		return ret;
-	}
-	return nullptr;
-}
 
 EffectRenderer::DistortingCallback::DistortingCallback(efk::Graphics* graphics, EffectRenderer* generator)
 	: graphics_(graphics)
@@ -183,52 +76,6 @@ bool EffectRenderer::DistortingCallback::OnDistorting(EffekseerRenderer::Rendere
 	}
 
 	return IsEnabled;
-}
-
-bool EffectRenderer::UpdateBackgroundMesh(const Color& backgroundColor)
-{
-	if (backgroundMesh_ != nullptr && !(backgroundColor != backgroundMeshColor_))
-		return true;
-
-	backgroundMeshColor_ = backgroundColor;
-
-	const float eps = 0.00001f;
-
-	Effekseer::CustomVector<Effekseer::Tool::StaticMeshVertex> vbData;
-	vbData.resize(4);
-	vbData[0].Pos = {-1.0f, 1.0f, 1.0f - eps};
-	vbData[1].Pos = {1.0f, 1.0f, 1.0f - eps};
-	vbData[2].Pos = {1.0f, -1.0f, 1.0f - eps};
-	vbData[3].Pos = {-1.0f, -1.0f, 1.0f - eps};
-
-	for (auto& vb : vbData)
-	{
-		vb.UV[0] = (vb.Pos[0] + 1.0f) / 2.0f;
-		vb.UV[1] = 1.0f - (vb.Pos[1] + 1.0f) / 2.0f;
-
-		vb.Normal = {0.0f, 1.0f, 0.0f};
-		vb.VColor = backgroundMeshColor_;
-	}
-	Effekseer::CustomVector<int32_t> ibData;
-	ibData.resize(6);
-	ibData[0] = 0;
-	ibData[1] = 1;
-	ibData[2] = 2;
-	ibData[3] = 0;
-	ibData[4] = 2;
-	ibData[5] = 3;
-
-	backgroundMesh_ = Effekseer::Tool::StaticMesh::Create(graphics_->GetGraphics()->GetGraphicsDevice(), vbData, ibData);
-	if (!backgroundMesh_)
-	{
-		return false;
-	}
-
-	backgroundMesh_->IsLit = false;
-
-	backgroundRenderer_->SetStaticMesh(backgroundMesh_);
-
-	return true;
 }
 
 void EffectRenderer::CopyToBack()
@@ -291,9 +138,9 @@ bool EffectRenderer::Initialize(std::shared_ptr<GraphicsDevice> graphicsDevice,
 	renderer_->SetDistortingCallback(m_distortionCallback);
 
 	// create postprocessings
-	bloomEffect_ = std::make_unique<BloomPostEffect>(graphics->GetGraphicsDevice());
-	linearToSRGBEffect_ = std::make_unique<LinearToSRGBPostEffect>(graphics->GetGraphicsDevice());
-	tonemapEffect_ = std::make_unique<TonemapPostEffect>(graphics->GetGraphicsDevice());
+	bloomEffect_ = std::make_unique<Effekseer::ToolRuntime::BloomPostEffect>(graphics->GetGraphicsDevice());
+	linearToSRGBEffect_ = std::make_unique<Effekseer::ToolRuntime::LinearToSRGBPostEffect>(graphics->GetGraphicsDevice());
+	tonemapEffect_ = std::make_unique<Effekseer::ToolRuntime::TonemapPostEffect>(graphics->GetGraphicsDevice());
 
 	if (!(bloomEffect_ != nullptr && bloomEffect_->GetIsValid() &&
 		  tonemapEffect_ != nullptr && tonemapEffect_->GetIsValid() &&
@@ -354,7 +201,8 @@ bool EffectRenderer::Initialize(std::shared_ptr<GraphicsDevice> graphicsDevice,
 	::Effekseer::RingRendererRef ring_renderer = renderer_->CreateRingRenderer();
 	::Effekseer::ModelRendererRef model_renderer = renderer_->CreateModelRenderer();
 	::Effekseer::TrackRendererRef track_renderer = renderer_->CreateTrackRenderer();
-	::Effekseer::GPUTimerRef gpu_timer = renderer_->CreateGPUTimer();
+	gpuTimer_ = renderer_->CreateGpuTimer();
+	::Effekseer::GpuParticleSystemRef gpu_particles = renderer_->CreateGpuParticleSystem();
 
 	if (sprite_renderer == nullptr)
 	{
@@ -369,14 +217,15 @@ bool EffectRenderer::Initialize(std::shared_ptr<GraphicsDevice> graphicsDevice,
 	manager_->SetRingRenderer(ring_renderer);
 	manager_->SetModelRenderer(model_renderer);
 	manager_->SetTrackRenderer(track_renderer);
-	manager_->SetGPUTimer(gpu_timer);
+	manager_->SetGpuParticleSystem(gpu_particles);
+	manager_->SetGpuTimer(nullptr);
 
 	if (graphics_->GetGraphics()->GetGraphicsDevice() != nullptr)
 	{
 
-		backgroundRenderer_ = Effekseer::Tool::StaticMeshRenderer::Create(graphics_->GetGraphics()->GetGraphicsDevice());
+		backgroundRenderer_ = Effekseer::Tool::BackgroundRenderer::Create(graphics_->GetGraphics()->GetGraphicsDevice());
 
-		if (backgroundRenderer_ != nullptr && UpdateBackgroundMesh(parameter_.BackgroundColor))
+		if (backgroundRenderer_ != nullptr && backgroundRenderer_->UpdateMesh(parameter_.BackgroundColor))
 		{
 			spdlog::trace("OK : Background");
 		}
@@ -420,7 +269,7 @@ bool EffectRenderer::Initialize(std::shared_ptr<GraphicsDevice> graphicsDevice,
 			PostEffect_Overdraw_PS::g_main,
 			sizeof(PostEffect_Overdraw_PS::g_main));
 
-		overdrawEffect_ = std::make_unique<PostProcess>(graphics_->GetGraphics()->GetGraphicsDevice(), shader, 0, 0);
+				overdrawEffect_ = std::make_unique<Effekseer::ToolRuntime::PostProcess>(graphics_->GetGraphics()->GetGraphicsDevice(), shader, 0, 0);
 #endif
 	}
 	else if (graphics->GetGraphicsDevice()->GetDeviceName() == "OpenGL")
@@ -461,7 +310,7 @@ bool EffectRenderer::Initialize(std::shared_ptr<GraphicsDevice> graphicsDevice,
 				{gl_postfx_overdraw_ps},
 				uniformLayoutUnlitAd);
 
-			overdrawEffect_ = std::make_unique<PostProcess>(graphics_->GetGraphics()->GetGraphicsDevice(), shader, 0, 0);
+			overdrawEffect_ = std::make_unique<Effekseer::ToolRuntime::PostProcess>(graphics_->GetGraphics()->GetGraphicsDevice(), shader, 0, 0);
 		}
 	}
 	else
@@ -547,6 +396,64 @@ void EffectRenderer::PlayEffect()
 
 	assert(effect_ != nullptr);
 
+	auto createExternalModels = [&]() -> std::vector<Effekseer::ExternalModel>
+	{
+		std::vector<Effekseer::ExternalModel> externalModels;
+
+		auto setting = manager_->GetSetting();
+		if (setting == nullptr)
+		{
+			return externalModels;
+		}
+
+		auto loader = setting->GetModelLoader();
+		if (loader == nullptr)
+		{
+			return externalModels;
+		}
+
+		for (const auto& external : externalModels_)
+		{
+			if (external.Path.empty())
+			{
+				continue;
+			}
+
+			auto model = loader->Load(external.Path.c_str());
+			if (model == nullptr)
+			{
+				continue;
+			}
+
+			Effekseer::Matrix43 tra, rot, scale, mat;
+			tra.Translation(external.PositionX, external.PositionY, external.PositionZ);
+			rot.RotationZXY(external.RotationZ, external.RotationX, external.RotationY);
+			scale.Scaling(external.ScaleX, external.ScaleY, external.ScaleZ);
+
+			mat.Indentity();
+			Effekseer::Matrix43::Multiple(mat, mat, scale);
+			Effekseer::Matrix43::Multiple(mat, mat, rot);
+			Effekseer::Matrix43::Multiple(mat, mat, tra);
+
+			Effekseer::ExternalModel dst(model, mat);
+			externalModels.emplace_back(dst);
+		}
+
+		return externalModels;
+	};
+
+	const auto externalModels = createExternalModels();
+
+	m_rootLocation.X = behavior_.PositionX;
+	m_rootLocation.Y = behavior_.PositionY;
+	m_rootLocation.Z = behavior_.PositionZ;
+	m_rootRotation.X = behavior_.RotationX;
+	m_rootRotation.Y = behavior_.RotationY;
+	m_rootRotation.Z = behavior_.RotationZ;
+	m_rootScale.X = behavior_.ScaleX;
+	m_rootScale.Y = behavior_.ScaleY;
+	m_rootScale.Z = behavior_.ScaleZ;
+
 	for (int32_t z = 0; z < behavior_.CountZ; z++)
 	{
 		for (int32_t y = 0; y < behavior_.CountY; y++)
@@ -565,7 +472,14 @@ void EffectRenderer::PlayEffect()
 				posY += behavior_.PositionY;
 				posZ += behavior_.PositionZ;
 
-				HandleHolder handleHolder(manager_->Play(effect_->GetEffect(), posX, posY, posZ));
+				Effekseer::Manager::PlayParameter playParameter;
+				playParameter.Effect = effect_->GetEffect();
+				playParameter.Position = {posX, posY, posZ};
+				playParameter.Rotation = {m_rootRotation.X, m_rootRotation.Y, m_rootRotation.Z};
+				playParameter.Scale = {m_rootScale.X, m_rootScale.Y, m_rootScale.Z};
+				playParameter.ExternalModels = externalModels;
+
+				HandleHolder handleHolder(manager_->Play(playParameter));
 
 				Effekseer::Matrix43 mat, matTra, matRot, matScale;
 				matTra.Translation(posX, posY, posZ);
@@ -596,6 +510,7 @@ void EffectRenderer::PlayEffect()
 	}
 
 	m_time = 0;
+	initialFrameUpdated_ = false;
 	m_rootLocation.X = behavior_.PositionX;
 	m_rootLocation.Y = behavior_.PositionY;
 	m_rootLocation.Z = behavior_.PositionZ;
@@ -623,9 +538,9 @@ void EffectRenderer::UpdatePaused()
 void EffectRenderer::Update()
 {
 	/*{
-		int32_t gpuTime = manager_->GetGPUTime();
+		int32_t gpuTime = manager_->GetGpuTime();
 		char log[256];
-		snprintf(log, sizeof(log), "GPUTime: %d\n", gpuTime);
+		snprintf(log, sizeof(log), "GpuTime: %d\n", gpuTime);
 		OutputDebugStringA(log);
 	}*/
 
@@ -743,6 +658,7 @@ void EffectRenderer::Update()
 		updateParameter.DeltaFrame = (float)m_step;
 		updateParameter.UpdateInterval = 0.0;
 		manager_->Update(updateParameter);
+		manager_->Compute();
 
 		renderer_->SetTime(m_time / 60.0f);
 
@@ -757,40 +673,65 @@ void EffectRenderer::Update()
 
 void EffectRenderer::Update(int32_t frame)
 {
-	if (frame <= 0)
+	const bool suppressGpuTimer = frame > 1 && gpuTimerEnabled_;
+	if (suppressGpuTimer)
+	{
+		manager_->SetGpuTimer(nullptr);
+	}
+
+	auto updateInitialFrame = [this]()
 	{
 		Effekseer::Manager::UpdateParameter updateParameter;
 		updateParameter.DeltaFrame = 0.0f;
 		updateParameter.UpdateInterval = 0.0;
 		manager_->Update(updateParameter);
-	}
-	else if (frame == 1)
+		initialFrameUpdated_ = true;
+	};
+
+	if (frame <= 0)
 	{
-		Update();
+		updateInitialFrame();
 	}
 	else
 	{
-		for (size_t i = 0; i < handles_.size(); i++)
+		if (m_time == 0 && !initialFrameUpdated_)
 		{
-			manager_->SetShown(handles_[i].Handle, false);
+			updateInitialFrame();
 		}
 
-		const auto updatingTime = Effekseer::Max(0, frame - m_step);
-
-		for (int i = 0; i < updatingTime; i++)
+		if (frame == 1)
 		{
 			Update();
 		}
-
-		for (size_t i = 0; i < handles_.size(); i++)
+		else
 		{
-			manager_->SetShown(handles_[i].Handle, true);
-		}
+			for (size_t i = 0; i < handles_.size(); i++)
+			{
+				manager_->SetShown(handles_[i].Handle, false);
+			}
 
-		for (int i = 0; i < frame - updatingTime; i++)
-		{
-			Update();
+			const auto updatingTime = Effekseer::Max(0, frame - m_step);
+
+			for (int i = 0; i < updatingTime; i++)
+			{
+				Update();
+			}
+
+			for (size_t i = 0; i < handles_.size(); i++)
+			{
+				manager_->SetShown(handles_[i].Handle, true);
+			}
+
+			for (int i = 0; i < frame - updatingTime; i++)
+			{
+				Update();
+			}
 		}
+	}
+
+	if (suppressGpuTimer)
+	{
+		manager_->SetGpuTimer(gpuTimer_);
 	}
 }
 
@@ -799,20 +740,20 @@ void EffectRenderer::SetLODDistanceBias(float distanceBias)
 	lodDistanceBias_ = distanceBias;
 }
 
-void EffectRenderer::Render(std::shared_ptr<RenderImage> renderImage)
+void EffectRenderer::Render(std::shared_ptr<Effekseer::ToolRuntime::RenderImage> renderImage)
 {
 	// Clear a destination texture
-	if (parameter_.RenderingMethod == RenderingMethodType::Overdraw)
+	if (backgroundRenderer_ != nullptr && parameter_.RenderingMethod == RenderingMethodType::Overdraw)
 	{
-		UpdateBackgroundMesh({0, 0, 0, 0});
+		backgroundRenderer_->UpdateMesh({0, 0, 0, 0});
 	}
-	else if (backgroundTexture_ != nullptr && backgroundTexture_->GetBackend() != nullptr)
+	else if (backgroundRenderer_ != nullptr && backgroundTexture_ != nullptr && backgroundTexture_->GetBackend() != nullptr)
 	{
-		UpdateBackgroundMesh({255, 255, 255, 255});
+		backgroundRenderer_->UpdateMesh({255, 255, 255, 255});
 	}
-	else
+	else if (backgroundRenderer_ != nullptr)
 	{
-		UpdateBackgroundMesh(parameter_.BackgroundColor);
+		backgroundRenderer_->UpdateMesh(parameter_.BackgroundColor);
 	}
 
 	auto renderTargetImage = renderImage->GetTexture();
@@ -850,22 +791,18 @@ void EffectRenderer::Render(std::shared_ptr<RenderImage> renderImage)
 	renderer_->SetLightColor(parameter_.LightColor);
 	renderer_->SetLightAmbientColor(parameter_.LightAmbientColor);
 
-	if (backgroundRenderer_ != nullptr && backgroundMesh_ != nullptr)
+	if (backgroundRenderer_ != nullptr)
 	{
 		if (backgroundTexture_ != nullptr)
 		{
-			backgroundMesh_->Texture = backgroundTexture_->GetBackend();
+			backgroundRenderer_->SetTexture(backgroundTexture_->GetBackend());
 		}
 		else
 		{
-			backgroundMesh_->Texture = nullptr;
+			backgroundRenderer_->SetTexture(nullptr);
 		}
 
-		Effekseer::Tool::RendererParameter param{};
-		param.CameraMatrix.Indentity();
-		param.ProjectionMatrix.Indentity();
-		param.WorldMatrix.Indentity();
-		backgroundRenderer_->Render(param);
+		backgroundRenderer_->Render();
 	}
 
 	if (parameter_.RenderingMethod != RenderingMethodType::Overdraw)
@@ -892,13 +829,7 @@ void EffectRenderer::Render(std::shared_ptr<RenderImage> renderImage)
 		graphics_->GetGraphics()->ResolveRenderTarget(depthRenderTextureMSAA, depthRenderTexture);
 	}
 
-	EffekseerRenderer::DepthReconstructionParameter reconstructionParam;
-	reconstructionParam.DepthBufferScale = 1.0f;
-	reconstructionParam.DepthBufferOffset = 0.0f;
-	reconstructionParam.ProjectionMatrix33 = parameter_.ProjectionMatrix.Value.Values[2][2];
-	reconstructionParam.ProjectionMatrix43 = parameter_.ProjectionMatrix.Value.Values[2][3];
-	reconstructionParam.ProjectionMatrix34 = parameter_.ProjectionMatrix.Value.Values[3][2];
-	reconstructionParam.ProjectionMatrix44 = parameter_.ProjectionMatrix.Value.Values[3][3];
+	const auto reconstructionParam = Effekseer::ToolRuntime::CreateDepthReconstructionParameter(parameter_.ProjectionMatrix.Value);
 
 	renderer_->SetDepth(depthRenderTexture, reconstructionParam);
 
@@ -1016,8 +947,7 @@ void EffectRenderer::Render(std::shared_ptr<RenderImage> renderImage)
 	if (parameter_.RenderingMethod == RenderingMethodType::Overdraw)
 	{
 		graphics_->GetGraphics()->SetRenderTarget({renderTargetImage}, nullptr);
-		overdrawEffect_->GetDrawParameter().TexturePtrs[0] = hdrRenderTexture;
-		overdrawEffect_->GetDrawParameter().TextureCount = 1;
+		overdrawEffect_->GetDrawParameter().SetTexture(0, hdrRenderTexture, Effekseer::Backend::TextureWrapType::Clamp, Effekseer::Backend::TextureSamplingType::Linear);
 		overdrawEffect_->Render();
 	}
 	else
@@ -1078,6 +1008,7 @@ const ViewerEffectBehavior& EffectRenderer::GetBehavior() const
 void EffectRenderer::SetBehavior(const ViewerEffectBehavior& behavior)
 {
 	behavior_ = behavior;
+	externalModels_ = behavior_.ExternalModels;
 }
 
 int EffectRenderer::GetCurrentLOD() const
@@ -1118,6 +1049,15 @@ void EffectRenderer::SetStep(int32_t step)
 	m_step = step;
 }
 
+void EffectRenderer::SetGpuTimerEnabled(bool enabled)
+{
+	gpuTimerEnabled_ = enabled;
+	if (manager_ != nullptr)
+	{
+		manager_->SetGpuTimer(gpuTimerEnabled_ ? gpuTimer_ : nullptr);
+	}
+}
+
 Effekseer::Tool::PostEffectParameter EffectRenderer::GetPostEffectParameter() const
 {
 	return postEffectParameter_;
@@ -1134,20 +1074,20 @@ void EffectRenderer::SetPostEffectParameter(const Effekseer::Tool::PostEffectPar
 	if (tonemapEffect_ != nullptr)
 	{
 		tonemapEffect_->SetEnabled(param.ToneMapAlgorithm != 0);
-		tonemapEffect_->SetParameters((Effekseer::Tool::TonemapPostEffect::Algorithm)param.ToneMapAlgorithm, param.ToneMapExposure);
+		tonemapEffect_->SetParameters((Effekseer::ToolRuntime::TonemapPostEffect::Algorithm)param.ToneMapAlgorithm, param.ToneMapExposure);
 	}
 
 	postEffectParameter_ = param;
 }
 
-int32_t EffectRenderer::GetCPUTime()
+int32_t EffectRenderer::GetCpuTime()
 {
 	return manager_->GetUpdateTime() + manager_->GetDrawTime();
 }
 
-int32_t EffectRenderer::GetGPUTime()
+int32_t EffectRenderer::GetGpuTime()
 {
-	return manager_->GetGPUTime();
+	return manager_->GetGpuTime();
 }
 
 } // namespace Tool

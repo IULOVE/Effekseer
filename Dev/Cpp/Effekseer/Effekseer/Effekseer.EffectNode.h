@@ -11,54 +11,37 @@
 #include "Sound/Effekseer.SoundPlayer.h"
 
 #include "Effekseer.Effect.h"
-#include "ForceField/ForceFields.h"
-#include "Noise/CurlNoise.h"
-#include "Parameter/AllTypeColor.h"
-#include "Parameter/AlphaCutoff.h"
-#include "Parameter/BasicSettings.h"
-#include "Parameter/Collisions.h"
-#include "Parameter/CustomData.h"
-#include "Parameter/DepthParameter.h"
-#include "Parameter/DynamicParameter.h"
-#include "Parameter/Easing.h"
+#include "ForceField/Effekseer.ForceFields.h"
+#include "Noise/Effekseer.CurlNoise.h"
+#include "Parameter/Effekseer.AllTypeColor.h"
+#include "Parameter/Effekseer.AlphaCutoff.h"
+#include "Parameter/Effekseer.BasicSettings.h"
+#include "Parameter/Effekseer.Collisions.h"
+#include "Parameter/Effekseer.CustomData.h"
+#include "Parameter/Effekseer.DepthParameter.h"
+#include "Parameter/Effekseer.DynamicParameter.h"
+#include "Parameter/Effekseer.Easing.h"
+#include "Parameter/Effekseer.KillRules.h"
+#include "Parameter/Effekseer.LOD.h"
 #include "Parameter/Effekseer.Parameters.h"
-#include "Parameter/KillRules.h"
-#include "Parameter/LOD.h"
-#include "Parameter/Rotation.h"
-#include "Parameter/Scaling.h"
-#include "Parameter/Sound.h"
-#include "Parameter/SpawnMethod.h"
-#include "Parameter/Translation.h"
-#include "Parameter/UV.h"
+#include "Parameter/Effekseer.Rotation.h"
+#include "Parameter/Effekseer.Scaling.h"
+#include "Parameter/Effekseer.Sound.h"
+#include "Parameter/Effekseer.SpawnMethod.h"
+#include "Parameter/Effekseer.Translation.h"
+#include "Parameter/Effekseer.Trigger.h"
+#include "Parameter/Effekseer.UV.h"
+#include "Renderer/Effekseer.GpuParticles.h"
 #include "SIMD/Utils.h"
-#include "Utils/BinaryVersion.h"
+#include "Utils/Effekseer.BinaryVersion.h"
 
 namespace Effekseer
 {
-
-enum class TriggerType : uint8_t
-{
-	None = 0,
-	ExternalTrigger = 1,
-};
-
-struct alignas(2) TriggerValues
-{
-	TriggerType type = TriggerType::None;
-	uint8_t index = 0;
-};
 
 struct SteeringBehaviorParameter
 {
 	random_float MaxFollowSpeed;
 	random_float SteeringSpeed;
-};
-
-struct TriggerParameter
-{
-	TriggerValues ToStartGeneration;
-	TriggerValues ToStopGeneration;
-	TriggerValues ToRemove;
 };
 
 struct ParameterRendererCommon
@@ -82,6 +65,8 @@ struct ParameterRendererCommon
 	int32_t TextureBlendType = -1;
 
 	float BlendUVDistortionIntensity = 1.0f;
+
+	int32_t UVHorizontalFlipProbability = 0;
 
 	float EmissiveScaling = 1.0f;
 
@@ -206,6 +191,8 @@ struct ParameterRendererCommon
 
 				memcpy(&textures, pos, sizeof(int));
 				pos += sizeof(int);
+				if (textures < 0 || textures > 1024)
+					return;
 
 				MaterialData.MaterialTextures.resize(textures);
 				if (MaterialData.MaterialTextures.size() > 0)
@@ -216,6 +203,8 @@ struct ParameterRendererCommon
 
 				memcpy(&uniforms, pos, sizeof(int));
 				pos += sizeof(int);
+				if (uniforms < 0 || uniforms > 1024)
+					return;
 
 				MaterialData.MaterialUniforms.resize(uniforms);
 				if (MaterialData.MaterialUniforms.size() > 0)
@@ -229,6 +218,8 @@ struct ParameterRendererCommon
 					int gradients = 0;
 					memcpy(&gradients, pos, sizeof(int));
 					pos += sizeof(int);
+					if (gradients < 0 || gradients > 1024)
+						return;
 
 					MaterialData.MaterialGradients.resize(gradients);
 					for (size_t i = 0; i < MaterialData.MaterialGradients.size(); i++)
@@ -336,6 +327,10 @@ struct ParameterRendererCommon
 
 			memcpy(&UVDistortionIntensity, pos, sizeof(float));
 			pos += sizeof(float);
+			if (TextureIndexes[static_cast<size_t>(RendererTextureType::UVDistortion)] < 0)
+			{
+				UVDistortionIntensity = 0.0f;
+			}
 
 			UVs[3].Load(pos, version, 3);
 
@@ -350,6 +345,20 @@ struct ParameterRendererCommon
 			// blend uv distortion intensity
 			memcpy(&BlendUVDistortionIntensity, pos, sizeof(float));
 			pos += sizeof(float);
+			if (TextureIndexes[static_cast<size_t>(RendererTextureType::BlendUVDistortion)] < 0)
+			{
+				BlendUVDistortionIntensity = 0.0f;
+			}
+		}
+
+		if (version >= Version18Alpha2)
+		{
+			memcpy(&UVHorizontalFlipProbability, pos, sizeof(int32_t));
+			pos += sizeof(int32_t);
+		}
+		else
+		{
+			UVHorizontalFlipProbability = 0;
 		}
 
 		if (version >= 10)
@@ -428,6 +437,14 @@ struct ParameterRendererCommon
 	}
 };
 
+struct TrailUVAnimationCache
+{
+	float InfiniteUVs[ParameterRendererCommon::UVParameterNum][4];
+	bool IsInfiniteUVInitialized[ParameterRendererCommon::UVParameterNum];
+	float InfiniteFlipbookIndexAndNextRate;
+	bool IsInfiniteFlipbookIndexAndNextRateInitialized;
+};
+
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
@@ -459,6 +476,7 @@ protected:
 
 	// 子ノード
 	std::vector<EffectNodeImplemented*> m_Nodes;
+	bool isLoadingValid_ = true;
 
 	RefPtr<RenderingUserData> renderingUserData_;
 
@@ -472,6 +490,21 @@ protected:
 
 	//! calculate custom data
 	void CalcCustomData(const Instance* instance, std::array<float, 4>& customData1, std::array<float, 4>& customData2);
+
+	void ApplyRendererCommonUVHorizontalFlip(Instance& instance, IRandObject& rand) const;
+
+	static void InitializeTrailUVAnimationCache(TrailUVAnimationCache& cache);
+
+	static RectF GetTrailUV(TrailUVAnimationCache& cache,
+							Instance* groupFirst,
+							const ParameterRendererCommon& rendererCommon,
+							int32_t index,
+							float livingTime,
+							float livedTime);
+
+	static float GetTrailFlipbookIndexAndNextRate(TrailUVAnimationCache& cache,
+												  Instance* groupFirst,
+												  const ParameterRendererCommon& rendererCommon);
 
 public:
 	/**
@@ -512,6 +545,8 @@ public:
 	FalloffParameter FalloffParam{};
 
 	ParameterSound Sound;
+
+	GpuParticles::ResourceRef GpuParticlesResource;
 
 	eRenderingOrder RenderingOrder = RenderingOrder_FirstCreatedInstanceIsFirst;
 

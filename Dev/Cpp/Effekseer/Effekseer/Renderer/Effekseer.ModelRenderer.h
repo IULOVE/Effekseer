@@ -9,6 +9,7 @@
 #include "../Effekseer.Color.h"
 #include "../Effekseer.Matrix43.h"
 #include "../Effekseer.RectF.h"
+#include "../Effekseer.RenderingTransform.h"
 #include "../Effekseer.Vector2D.h"
 #include "../Effekseer.Vector3D.h"
 #include "../Parameter/Effekseer.Parameters.h"
@@ -52,8 +53,13 @@ public:
 		bool EnableViewOffset = false;
 
 		bool IsProceduralMode = false;
+		bool IsExternalMode = false;
+		ModelRef ExternalModel = nullptr;
+		SIMD::Mat43f ExternalModelTransform = SIMD::Mat43f::Identity;
 
 		RefPtr<RenderingUserData> UserData;
+		EffectRenderingTransformParameter RenderingCoordinateTransform;
+		EffectRenderingTransformParameter RenderingTransform;
 	};
 
 	struct InstanceParameter
@@ -80,6 +86,8 @@ public:
 		Color AllColor;
 		int32_t Time;
 		SIMD::Vec3f Direction;
+
+		float ParticleTimes[2];
 
 		std::array<float, 4> CustomData1;
 		std::array<float, 4> CustomData2;

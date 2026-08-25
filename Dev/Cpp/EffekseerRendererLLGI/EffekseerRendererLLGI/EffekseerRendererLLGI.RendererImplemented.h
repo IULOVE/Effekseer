@@ -25,6 +25,7 @@ public:
 	EffekseerRenderer::RenderStateBase::State state;
 	LLGI::TopologyType topologyType;
 	LLGI::RenderPassPipelineState* renderPassPipelineState = nullptr;
+	int32_t vertexBufferStride = 0;
 	bool operator<(const PiplineStateKey& v) const;
 };
 
@@ -54,24 +55,24 @@ protected:
 	Effekseer::Backend::IndexBufferRef currentndexBuffer_;
 	Effekseer::Backend::IndexBufferRef indexBuffer_;
 	Effekseer::Backend::IndexBufferRef indexBufferForWireframe_;
-	int32_t m_squareMaxCount;
+	int32_t squareMaxCount_;
 	Shader* currentShader = nullptr;
 
 	bool isReversedDepth_ = false;
 
-	EffekseerRenderer::StandardRenderer<RendererImplemented, Shader>* m_standardRenderer;
+	EffekseerRenderer::StandardRenderer<RendererImplemented, Shader>* standardRenderer_;
 
-	::Effekseer::CoordinateSystem m_coordinateSystem;
+	::Effekseer::CoordinateSystem coordinateSystem_;
 
-	::EffekseerRenderer::RenderStateBase* m_renderState;
+	::EffekseerRenderer::RenderStateBase* renderState_;
 
-	std::set<DeviceObject*> m_deviceObjects;
+	std::set<DeviceObject*> deviceObjects_;
 
-	EffekseerRenderer::DistortingCallback* m_distortingCallback;
+	EffekseerRenderer::DistortingCallback* distortingCallback_;
 
-	::Effekseer::Backend::TextureRef m_backgroundLLGI;
+	::Effekseer::Backend::TextureRef backgroundLLGI_;
 
-	Effekseer::RenderMode m_renderMode = Effekseer::RenderMode::Normal;
+	Effekseer::RenderMode renderMode_ = Effekseer::RenderMode::Normal;
 
 	Effekseer::RefPtr<EffekseerRenderer::CommandList> commandList_ = nullptr;
 
@@ -103,6 +104,8 @@ public:
 
 	void ChangeRenderPassPipelineState(LLGI::RenderPassPipelineStateKey key);
 
+	void ResetPiplineStates();
+
 	bool BeginRendering() override;
 
 	bool EndRendering() override;
@@ -122,6 +125,11 @@ public:
 	LLGI::Graphics* GetGraphics() const override
 	{
 		return graphicsDevice_->GetGraphics();
+	}
+
+	std::shared_ptr<LLGI::RenderPassPipelineState> GetCurrentRenderPassPipelineState() const
+	{
+		return currentRenderPassPipelineState_;
 	}
 
 	Effekseer::Backend::IndexBufferRef GetIndexBuffer();
@@ -159,6 +167,21 @@ public:
 	::Effekseer::TrackRendererRef CreateTrackRenderer() override;
 
 	/**
+		@brief	GPUタイマーを生成する。
+	*/
+	::Effekseer::GpuTimerRef CreateGpuTimer() override;
+
+	/**
+		@brief	GPUパーティクルシステムを生成する。
+	*/
+	::Effekseer::GpuParticleSystemRef CreateGpuParticleSystem(const Effekseer::GpuParticleSystem::Settings& settings = {}) override;
+
+	/**
+		@brief	GPUパーティクルファクトリを生成する。
+	*/
+	::Effekseer::GpuParticleFactoryRef CreateGpuParticleFactory() override;
+
+	/**
 		@brief	テクスチャ読込クラスを生成する。
 	*/
 	::Effekseer::TextureLoaderRef CreateTextureLoader(::Effekseer::FileInterfaceRef fileInterface = nullptr) override;
@@ -178,7 +201,7 @@ public:
 
 	EffekseerRenderer::StandardRenderer<RendererImplemented, Shader>* GetStandardRenderer()
 	{
-		return m_standardRenderer;
+		return standardRenderer_;
 	}
 
 	void SetVertexBuffer(LLGI::Buffer* vertexBuffer, int32_t stride);
@@ -201,6 +224,14 @@ public:
 	void SetTextures(Shader* shader, Effekseer::Backend::TextureRef* textures, int32_t count);
 
 	void ResetRenderState() override;
+
+	void ResetQuery(LLGI::Query* query);
+
+	void BeginQuery(LLGI::Query* query, uint32_t queryIndex);
+
+	void EndQuery(LLGI::Query* query, uint32_t queryIndex);
+
+	void RecordTimestamp(LLGI::Query* query, uint32_t queryIndex);
 
 	virtual int GetRef() override
 	{

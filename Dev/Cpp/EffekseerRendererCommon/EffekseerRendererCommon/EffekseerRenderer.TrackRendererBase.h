@@ -31,11 +31,11 @@ template <typename RENDERER, bool FLIP_RGB_FLAG>
 class TrackRendererBase : public ::Effekseer::TrackRenderer, public ::Effekseer::SIMD::AlignedAllocationPolicy<16>
 {
 protected:
-	RENDERER* m_renderer;
-	int32_t m_ribbonCount;
+	RENDERER* renderer_;
+	int32_t ribbonCount_;
 
-	int32_t m_ringBufferOffset;
-	uint8_t* m_ringBufferData;
+	int32_t ringBufferOffset_;
+	uint8_t* ringBufferData_;
 
 	Effekseer::CustomAlignedVector<efkTrackInstanceParam> instances;
 	Effekseer::CustomAlignedVector<Effekseer::SIMD::Quaternionf> rotations_temp_;
@@ -55,6 +55,12 @@ protected:
 		{
 			return;
 		}
+
+		const auto cameraForRendering = TransformCameraMatrixToEffectSpace(camera, parameter.RenderingCoordinateTransform);
+		const auto cameraFrontForRendering = TransformCameraFrontToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraFrontDirection()), parameter.RenderingCoordinateTransform);
+		const auto cameraPositionForRendering = TransformCameraPositionToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraPosition()), parameter.RenderingCoordinateTransform);
 
 		if (parameter.SmoothingType == Effekseer::TrailSmoothingType::On)
 		{
@@ -76,7 +82,7 @@ protected:
 				}
 
 				auto U = SafeNormalize(axis);
-				auto F = ::Effekseer::SIMD::Vec3f(m_renderer->GetCameraFrontDirection());
+				auto F = cameraFrontForRendering;
 				auto R = SafeNormalize(::Effekseer::SIMD::Vec3f::Cross(U, F));
 				U = ::Effekseer::SIMD::Vec3f::Cross(F, R);
 
@@ -121,12 +127,12 @@ protected:
 
 				if (parameter.EnableViewOffset == true)
 				{
-					ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+					ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 				}
 
 				ApplyDepthParameters(mat,
-									 m_renderer->GetCameraFrontDirection(),
-									 m_renderer->GetCameraPosition(),
+									 cameraFrontForRendering,
+									 cameraPositionForRendering,
 									 // s,
 									 parameter.DepthParameterPtr,
 									 parameter.IsRightHand);
@@ -138,7 +144,7 @@ protected:
 			spline.Calculate();
 		}
 
-		StrideView<VERTEX> verteies(m_ringBufferData, stride_, vertexCount_);
+		StrideView<VERTEX> verteies(ringBufferData_, stride_, vertexCount_);
 
 		for (size_t loop = 0; loop < instances.size(); loop++)
 		{
@@ -150,7 +156,7 @@ protected:
 
 				if (parameter.EnableViewOffset == true)
 				{
-					ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+					ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 				}
 
 				::Effekseer::SIMD::Vec3f s;
@@ -161,8 +167,8 @@ protected:
 				ApplyDepthParameters(r,
 									 t,
 									 s,
-									 m_renderer->GetCameraFrontDirection(),
-									 m_renderer->GetCameraPosition(),
+									 cameraFrontForRendering,
+									 cameraPositionForRendering,
 									 parameter.DepthParameterPtr,
 									 parameter.IsRightHand);
 
@@ -260,6 +266,9 @@ protected:
 				v[0].SetAlphaThreshold(param.AlphaThreshold);
 				v[1].SetAlphaThreshold(param.AlphaThreshold);
 				v[2].SetAlphaThreshold(param.AlphaThreshold);
+				v[0].SetParticleTime(param.ParticleTimes[0], param.ParticleTimes[1]);
+				v[1].SetParticleTime(param.ParticleTimes[0], param.ParticleTimes[1]);
+				v[2].SetParticleTime(param.ParticleTimes[0], param.ParticleTimes[1]);
 
 				if (parameter.SplineDivision > 1)
 				{
@@ -285,7 +294,7 @@ protected:
 					verteies[4] = v[1];
 					verteies[5] = v[2];
 					verteies += 6;
-					m_ribbonCount += 2;
+					ribbonCount_ += 2;
 				}
 				else
 				{
@@ -300,7 +309,7 @@ protected:
 					verteies[11] = v[2];
 
 					verteies += 8;
-					m_ribbonCount += 2;
+					ribbonCount_ += 2;
 				}
 
 				if (isLast)
@@ -312,7 +321,7 @@ protected:
 
 		// transform all vertecies
 		{
-			StrideView<VERTEX> vs_(m_ringBufferData, stride_, vertexCount_);
+			StrideView<VERTEX> vs_(ringBufferData_, stride_, vertexCount_);
 			Effekseer::SIMD::Vec3f axisBefore{};
 
 			for (size_t i = 0; i < (instances.size() - 1) * parameter.SplineDivision + 1; i++)
@@ -395,7 +404,7 @@ protected:
 					/*
 					U = axis;
 
-					F = ::Effekseer::SIMD::Vec3f(m_renderer->GetCameraFrontDirection()).Normalize();
+					F = cameraFrontForRendering.Normalize();
 					R = ::Effekseer::SIMD::Vec3f::Cross(U, F).Normalize();
 					F = ::Effekseer::SIMD::Vec3f::Cross(R, U).Normalize();
 
@@ -411,12 +420,20 @@ protected:
 					*/
 
 					U = axis;
-					F = m_renderer->GetCameraFrontDirection();
+					F = cameraFrontForRendering;
 					R = SafeNormalize(::Effekseer::SIMD::Vec3f::Cross(U, F));
 
 					vl.Pos = ToStruct(-R * vl.Pos.X + pos);
 					vm.Pos = ToStruct(pos);
 					vr.Pos = ToStruct(-R * vr.Pos.X + pos);
+				}
+
+				if (parameter.RenderingTransform.IsEnabled)
+				{
+					vl.Pos = ToStruct(Effekseer::SIMD::Vec3f::Transform(vl.Pos, parameter.RenderingTransform.Transform));
+					vm.Pos = ToStruct(Effekseer::SIMD::Vec3f::Transform(vm.Pos, parameter.RenderingTransform.Transform));
+					vr.Pos = ToStruct(Effekseer::SIMD::Vec3f::Transform(vr.Pos, parameter.RenderingTransform.Transform));
+					axis = SafeNormalize(TransformDirection(axis, parameter.RenderingTransform.Transform));
 				}
 
 				if (VertexNormalRequired<VERTEX>())
@@ -428,9 +445,13 @@ protected:
 					{
 						normal = -normal;
 					}
+					if (parameter.RenderingTransform.ReversesWinding)
+					{
+						normal = -normal;
+					}
 
 					Effekseer::Color normal_ = PackVector3DF(normal);
-					Effekseer::Color tangent_ = PackVector3DF(tangent);
+					Effekseer::Color tangent_ = PackTangent(tangent, parameter.RenderingTransform.ReversesWinding);
 
 					vl.SetPackedNormal(normal_, FLIP_RGB);
 					vm.SetPackedNormal(normal_, FLIP_RGB);
@@ -493,7 +514,7 @@ protected:
 		// custom parameter
 		if (customData1Count_ > 0)
 		{
-			StrideView<float> custom(m_ringBufferData + sizeof(DynamicVertex), stride_, vertexCount_);
+			StrideView<float> custom(ringBufferData_ + sizeof(DynamicVertex), stride_, vertexCount_);
 			for (size_t loop = 0; loop < instances.size() - 1; loop++)
 			{
 				auto& param = instances[loop];
@@ -512,7 +533,7 @@ protected:
 
 		if (customData2Count_ > 0)
 		{
-			StrideView<float> custom(m_ringBufferData + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, vertexCount_);
+			StrideView<float> custom(ringBufferData_ + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, vertexCount_);
 			for (size_t loop = 0; loop < instances.size() - 1; loop++)
 			{
 				auto& param = instances[loop];
@@ -532,10 +553,10 @@ protected:
 
 public:
 	TrackRendererBase(RENDERER* renderer)
-		: m_renderer(renderer)
-		, m_ribbonCount(0)
-		, m_ringBufferOffset(0)
-		, m_ringBufferData(nullptr)
+		: renderer_(renderer)
+		, ribbonCount_(0)
+		, ringBufferOffset_(0)
+		, ringBufferData_(nullptr)
 	{
 	}
 
@@ -548,12 +569,12 @@ protected:
 					const efkTrackInstanceParam& instanceParameter,
 					const ::Effekseer::SIMD::Mat44f& camera)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
 		if (instanceParameter.InstanceCount <= 1)
 			return;
 
-		const auto& state = m_renderer->GetStandardRenderer()->GetState();
+		const auto& state = renderer_->GetStandardRenderer()->GetState();
 		const ShaderParameterCollector& collector = state.Collector;
 
 		if (collector.ShaderType == RendererShaderType::Material)
@@ -591,7 +612,7 @@ protected:
 							const efkTrackInstanceParam& instanceParameter,
 							const ::Effekseer::SIMD::Mat44f& camera)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
 		if (instanceParameter.InstanceCount < 2)
 			return;
@@ -624,12 +645,12 @@ protected:
 public:
 	void Rendering(const efkTrackNodeParam& parameter, const efkTrackInstanceParam& instanceParameter, void* userData) override
 	{
-		Rendering_(parameter, instanceParameter, m_renderer->GetCameraMatrix());
+		Rendering_(parameter, instanceParameter, renderer_->GetCameraMatrix());
 	}
 
 	void BeginRenderingGroup(const efkTrackNodeParam& param, int32_t count, void* userData) override
 	{
-		m_ribbonCount = 0;
+		ribbonCount_ = 0;
 		int32_t vertexCount = ((count - 1) * param.SplineDivision) * 8;
 		if (vertexCount <= 0)
 			return;
@@ -669,20 +690,20 @@ public:
 		state.LocalTime = param.LocalTime;
 
 		state.CopyMaterialFromParameterToState(
-			m_renderer,
+			renderer_,
 			param.EffectPointer,
 			param.BasicParameterPtr);
 
 		customData1Count_ = state.CustomData1Count;
 		customData2Count_ = state.CustomData2Count;
 
-		m_renderer->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, vertexCount, stride_, (void*&)m_ringBufferData);
+		renderer_->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, vertexCount, stride_, (void*&)ringBufferData_);
 		vertexCount_ = vertexCount;
 	}
 
 	void EndRendering(const efkTrackNodeParam& parameter, void* userData) override
 	{
-		m_renderer->GetStandardRenderer()->EndRenderingAndRenderingIfRequired();
+		renderer_->GetStandardRenderer()->EndRenderingAndRenderingIfRequired();
 	}
 };
 

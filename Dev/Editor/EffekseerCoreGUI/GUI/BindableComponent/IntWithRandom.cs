@@ -14,6 +14,7 @@ namespace Effekseer.GUI.BindableComponent
 		string id_c = "";
 		string id_d1 = "";
 		string id_d2 = "";
+		string id_reset = "";
 
 		Data.Value.IntWithRandom binding = null;
 
@@ -55,6 +56,7 @@ namespace Effekseer.GUI.BindableComponent
 			id_c = "###" + Manager.GetUniqueID().ToString();
 			id_d1 = "###" + Manager.GetUniqueID().ToString();
 			id_d2 = "###" + Manager.GetUniqueID().ToString();
+			id_reset = "###" + Manager.GetUniqueID().ToString();
 		}
 
 		public void SetBinding(object o)
@@ -147,7 +149,7 @@ namespace Effekseer.GUI.BindableComponent
 			if (Manager.NativeManager.DragInt2EfkEx(id, internalValue, binding.Step,
 				range_1_min, range_1_max,
 				range_2_min, range_2_max,
-				txt_r1 + ":" + "%.0f", txt_r2 + ":" + "%.0f"))
+				txt_r1 + ":" + "%d", txt_r2 + ":" + "%d"))
 			{
 				if (EnableUndo)
 				{
@@ -206,6 +208,8 @@ namespace Effekseer.GUI.BindableComponent
 
 			if (Manager.NativeManager.BeginPopupContextItem(id_c))
 			{
+				Functions.ShowReset(binding, id_reset);
+
 				if (binding.CanSelectDynamicEquation)
 				{
 					DynamicSelector.Popup(id_c, binding.DynamicEquationMax, binding.DynamicEquationMin, binding.IsDynamicEquationEnabled);

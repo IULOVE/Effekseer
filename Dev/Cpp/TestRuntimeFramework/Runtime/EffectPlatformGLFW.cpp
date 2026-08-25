@@ -1,19 +1,23 @@
-#if !defined(__APPLE__)
-#define GLEW_STATIC
-typedef char GLchar;
-#include <GL/glew.h>
-#endif
-
 #include "EffectPlatformGLFW.h"
 
+#include <cstdlib>
 #include <iostream>
+
+#include <EffekseerRendererGL/EffekseerRendererGL.GLExtension.h>
+#include <OpenGLExtensions.h>
 
 #if !defined(__APPLE__)
 void GLAPIENTRY glDebugOutput(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
 {
 	if (type != GL_DEBUG_TYPE_PORTABILITY && type != GL_DEBUG_TYPE_OTHER)
 	{
-		std::cout << message << std::endl;
+		std::cout.write(message, length);
+		std::cout << std::endl;
+	}
+
+	if (type == GL_DEBUG_TYPE_ERROR)
+	{
+		std::abort();
 	}
 }
 #endif
@@ -118,16 +122,17 @@ void EffectPlatformGLFW::InitializeWindow()
 		glfwMakeContextCurrent(glfwWindow_);
 
 #if !defined(__APPLE__)
-		glewInit();
+		Effekseer::OpenGLHelper::Initialize();
 
 		GLint flags;
 		glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
-		if (flags & GL_CONTEXT_FLAG_DEBUG_BIT)
+		if ((flags & GL_CONTEXT_FLAG_DEBUG_BIT) != 0 && Effekseer::OpenGLHelper::IsSupportedDebugOutput())
 		{
 			glEnable(GL_DEBUG_OUTPUT);
 			glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-			glDebugMessageCallback(glDebugOutput, NULL);
-			glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
+			Effekseer::OpenGLHelper::glDebugMessageCallback(glDebugOutput, nullptr);
+			Effekseer::OpenGLHelper::glDebugMessageControl(
+				GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 		}
 #endif
 	}

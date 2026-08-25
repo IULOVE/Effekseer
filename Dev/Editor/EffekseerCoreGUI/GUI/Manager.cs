@@ -82,7 +82,12 @@ namespace Effekseer.GUI
 		{
 			try
 			{
-				System.Diagnostics.Process.Start(path);
+				var info = new System.Diagnostics.ProcessStartInfo
+				{
+					FileName = path,
+					UseShellExecute = true
+				};
+				System.Diagnostics.Process.Start(info);
 			}
 			catch
 			{
@@ -400,6 +405,7 @@ namespace Effekseer.GUI
 			Core.EffectBehavior.ColorAll.A.OnChanged += OnChanged;
 
 			Core.EffectBehavior.PlaybackSpeed.OnChanged += OnChanged;
+			Core.EffectBehavior.ExternalModels.OnChanged += OnChanged;
 
 			Core.Option.Magnification.OnChanged += OnChanged;
 			Core.Option.IsGridShown.OnChanged += OnChanged;
@@ -420,6 +426,7 @@ namespace Effekseer.GUI
 			Core.Environment.Background.BackgroundImage.OnChanged += OnChanged;
 
 			Core.Environment.Ground.IsShown.OnChanged += OnChanged;
+			Core.Environment.Ground.IsCollisionEnabled.OnChanged += OnChanged;
 			Core.Environment.Ground.Height.OnChanged += OnChanged;
 			Core.Environment.Ground.Extent.OnChanged += OnChanged;
 
@@ -608,25 +615,7 @@ namespace Effekseer.GUI
 		{
 			if (isFontSizeDirtied)
 			{
-				NativeManager.InvalidateFont();
-				var appDirectory = Manager.GetEntryDirectory();
-				var type = Core.Option.Font.Value;
-
-				NativeManager.ClearAllFonts();
-
-				var characterTable = System.IO.Path.Combine(appDirectory, "resources/languages/characterTable.txt");
-
-				if (type == Data.FontType.Normal)
-				{
-					NativeManager.AddFontFromFileTTF(System.IO.Path.Combine(appDirectory, MultiLanguageTextProvider.GetText("Font_Normal")), characterTable, MultiLanguageTextProvider.GetText("CharacterTable"), Core.Option.FontSize.Value);
-				}
-				else if (type == Data.FontType.Bold)
-				{
-					NativeManager.AddFontFromFileTTF(System.IO.Path.Combine(appDirectory, MultiLanguageTextProvider.GetText("Font_Bold")), characterTable, MultiLanguageTextProvider.GetText("CharacterTable"), Core.Option.FontSize.Value);
-				}
-
-				NativeManager.AddFontFromAtlasImage(System.IO.Path.Combine(appDirectory, "resources/icons/MenuIcons.png"), 0xec00, 24, 24, 16, 16);
-
+				ReloadFonts();
 				isFontSizeDirtied = false;
 			}
 
@@ -657,6 +646,7 @@ namespace Effekseer.GUI
 			if ((effectViewer == null && !NativeManager.IsAnyWindowHovered()) || (effectViewer != null && effectViewer.IsHovered))
 			{
 				var result = ControllViewport();
+				var mouseWheel = NativeManager.GetMouseWheel();
 
 				if (result.Slide)
 				{
@@ -672,9 +662,9 @@ namespace Effekseer.GUI
 						Viewer.Slide(dx / 16.0f, dy / 16.0f);
 					}
 				}
-				else if (NativeManager.GetMouseWheel() != 0)
+				else if (mouseWheel != 0.0f)
 				{
-					Viewer.Zoom(NativeManager.GetMouseWheel());
+					Viewer.Zoom(mouseWheel);
 				}
 				else if (result.Zoom)
 				{
@@ -783,6 +773,36 @@ namespace Effekseer.GUI
 			{
 				System.Threading.Thread.Sleep(16);
 			}
+		}
+
+		private static void ReloadFonts()
+		{
+			NativeManager.InvalidateFont();
+
+			var appDirectory = Manager.GetEntryDirectory();
+			var fontType = Core.Option.Font.Value;
+			var fontSize = Core.Option.FontSize.Value;
+			var characterTable = System.IO.Path.Combine(appDirectory, "resources/languages/characterTable.txt");
+
+			NativeManager.ClearAllFonts();
+			NativeManager.SetFontSizeBase(fontSize);
+
+			string fontPath = null;
+			if (fontType == Data.FontType.Normal)
+			{
+				fontPath = System.IO.Path.Combine(appDirectory, MultiLanguageTextProvider.GetText("Font_Normal"));
+			}
+			else if (fontType == Data.FontType.Bold)
+			{
+				fontPath = System.IO.Path.Combine(appDirectory, MultiLanguageTextProvider.GetText("Font_Bold"));
+			}
+
+			if (fontPath != null)
+			{
+				NativeManager.AddFontFromFileTTF(fontPath, characterTable, MultiLanguageTextProvider.GetText("CharacterTable"), fontSize);
+			}
+
+			NativeManager.AddFontFromAtlasImage(System.IO.Path.Combine(appDirectory, "resources/icons/MenuIcons.png"), 0xec00, 24, 24, 16, 16);
 		}
 
 		private static void UpdateAutoSave()

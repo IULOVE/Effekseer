@@ -151,11 +151,22 @@ void CalcBillboard(::Effekseer::BillboardType billboardType,
 			{
 				U = Effekseer::SIMD::Vec3f(0.0f, 1.0f, 0.0f);
 			}
+			else
+			{
+				U = U.GetNormal();
+			}
 
 			F = frontDir;
-			R = ::Effekseer::SIMD::Vec3f::Cross(U, F).GetNormal();
-			U = ::Effekseer::SIMD::Vec3f::Cross(F, R).GetNormal();
-			R = ::Effekseer::SIMD::Vec3f::Cross(U, F).GetNormal();
+			R = ::Effekseer::SIMD::Vec3f::Cross(U, F);
+			if (R.IsZero())
+			{
+				const auto fallbackAxis = fabsf(U.GetY()) < 0.999f
+											  ? Effekseer::SIMD::Vec3f(0.0f, 1.0f, 0.0f)
+											  : Effekseer::SIMD::Vec3f(1.0f, 0.0f, 0.0f);
+				R = ::Effekseer::SIMD::Vec3f::Cross(U, fallbackAxis);
+			}
+			R = R.GetNormal();
+			F = ::Effekseer::SIMD::Vec3f::Cross(R, U).GetNormal();
 		}
 
 		dst.X = {R.GetX(), U.GetX(), F.GetX(), t.GetX()};
@@ -506,6 +517,11 @@ void CalculateAlignedTextureInformation(Effekseer::Backend::TextureFormatType fo
 		sizePerWidth = 4 * size[0];
 		height = size[1];
 	}
+	else if (format == Effekseer::Backend::TextureFormatType::RG11B10_UFLOAT)
+	{
+		sizePerWidth = 4 * size[0];
+		height = size[1];
+	}
 	else if (format == Effekseer::Backend::TextureFormatType::R8_UNORM)
 	{
 		sizePerWidth = 1 * size[0];
@@ -541,6 +557,11 @@ void CalculateAlignedTextureInformation(Effekseer::Backend::TextureFormatType fo
 		sizePerWidth = 16 * aligned(size[0], blockSize) / blockSize;
 		height = aligned(size[1], blockSize) / blockSize;
 	}
+	else if (format == Effekseer::Backend::TextureFormatType::BC7)
+	{
+		sizePerWidth = 16 * aligned(size[0], blockSize) / blockSize;
+		height = aligned(size[1], blockSize) / blockSize;
+	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC1_SRGB)
 	{
 		sizePerWidth = 8 * aligned(size[0], blockSize) / blockSize;
@@ -552,6 +573,11 @@ void CalculateAlignedTextureInformation(Effekseer::Backend::TextureFormatType fo
 		height = aligned(size[1], blockSize) / blockSize;
 	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC3_SRGB)
+	{
+		sizePerWidth = 16 * aligned(size[0], blockSize) / blockSize;
+		height = aligned(size[1], blockSize) / blockSize;
+	}
+	else if (format == Effekseer::Backend::TextureFormatType::BC7_SRGB)
 	{
 		sizePerWidth = 16 * aligned(size[0], blockSize) / blockSize;
 		height = aligned(size[1], blockSize) / blockSize;
@@ -624,40 +650,43 @@ Effekseer::Backend::VertexLayoutRef GetVertexLayout(Effekseer::Backend::Graphics
 
 Effekseer::Backend::VertexLayoutRef GetModelRendererVertexLayout(Effekseer::Backend::GraphicsDeviceRef graphicsDevice)
 {
-	const Effekseer::Backend::VertexLayoutElement vlElem[6] = {
+	const Effekseer::Backend::VertexLayoutElement vlElem[7] = {
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "Input_Pos", "POSITION", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "Input_Normal", "NORMAL", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "Input_Binormal", "NORMAL", 1},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "Input_Tangent", "NORMAL", 2},
-		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "Input_UV", "TEXCOORD", 0},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "Input_UV1", "TEXCOORD", 0},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "Input_UV2", "TEXCOORD", 1},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "Input_Color", "NORMAL", 3},
 	};
 
-	return graphicsDevice->CreateVertexLayout(vlElem, 6);
+	return graphicsDevice->CreateVertexLayout(vlElem, 7);
 }
 
 Effekseer::Backend::VertexLayoutRef GetMaterialSimpleVertexLayout(Effekseer::Backend::GraphicsDeviceRef graphicsDevice)
 {
-	const Effekseer::Backend::VertexLayoutElement vlElem[3] = {
+	const Effekseer::Backend::VertexLayoutElement vlElem[4] = {
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "atPosition", "POSITION", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "atColor", "NORMAL", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "atTexCoord", "TEXCOORD", 0},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "atParticleTime", "TEXCOORD", 1},
 	};
 
-	return graphicsDevice->CreateVertexLayout(vlElem, 3);
+	return graphicsDevice->CreateVertexLayout(vlElem, 4);
 }
 
 Effekseer::Backend::VertexLayoutRef GetMaterialSpriteVertexLayout(Effekseer::Backend::GraphicsDeviceRef graphicsDevice, int32_t customData1, int32_t customData2)
 {
-	Effekseer::Backend::VertexLayoutElement vlElem[8] = {
+	Effekseer::Backend::VertexLayoutElement vlElem[9] = {
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "atPosition", "POSITION", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "atColor", "NORMAL", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "atNormal", "NORMAL", 1},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "atTangent", "NORMAL", 2},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "atTexCoord", "TEXCOORD", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "atTexCoord2", "TEXCOORD", 1},
-		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "", "TEXCOORD", 2},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "atParticleTime", "TEXCOORD", 2},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "", "TEXCOORD", 3},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "", "TEXCOORD", 4},
 	};
 
 	auto getFormat = [](int32_t i) -> Effekseer::Backend::VertexLayoutFormat
@@ -675,9 +704,9 @@ Effekseer::Backend::VertexLayoutRef GetMaterialSpriteVertexLayout(Effekseer::Bac
 		return Effekseer::Backend::VertexLayoutFormat::R32_FLOAT;
 	};
 
-	int32_t offset = 40;
-	int count = 6;
-	int semanticIndex = 2;
+	int32_t offset = 48;
+	int count = 7;
+	int semanticIndex = 3;
 	const char* customData1Name = "atCustomData1";
 	const char* customData2Name = "atCustomData2";
 
@@ -708,16 +737,17 @@ Effekseer::Backend::VertexLayoutRef GetMaterialSpriteVertexLayout(Effekseer::Bac
 
 Effekseer::Backend::VertexLayoutRef GetMaterialModelVertexLayout(Effekseer::Backend::GraphicsDeviceRef graphicsDevice)
 {
-	const Effekseer::Backend::VertexLayoutElement vlElem[6] = {
+	const Effekseer::Backend::VertexLayoutElement vlElem[7] = {
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "a_Position", "POSITION", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "a_Normal", "NORMAL", 0},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "a_Binormal", "NORMAL", 1},
 		{Effekseer::Backend::VertexLayoutFormat::R32G32B32_FLOAT, "a_Tangent", "NORMAL", 2},
-		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "a_TexCoord", "TEXCOORD", 0},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "a_TexCoord1", "TEXCOORD", 0},
+		{Effekseer::Backend::VertexLayoutFormat::R32G32_FLOAT, "a_TexCoord2", "TEXCOORD", 1},
 		{Effekseer::Backend::VertexLayoutFormat::R8G8B8A8_UNORM, "a_Color", "NORMAL", 3},
 	};
 
-	return graphicsDevice->CreateVertexLayout(vlElem, 6);
+	return graphicsDevice->CreateVertexLayout(vlElem, 7);
 }
 
 bool DirtiedBlock::Allocate(int32_t size, int32_t offset)

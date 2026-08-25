@@ -4,6 +4,8 @@
 #include "EffekseerRendererLLGI.RenderState.h"
 #include "EffekseerRendererLLGI.RendererImplemented.h"
 
+#include "EffekseerRendererLLGI.GpuParticles.h"
+#include "EffekseerRendererLLGI.GpuTimer.h"
 #include "EffekseerRendererLLGI.MaterialLoader.h"
 #include "EffekseerRendererLLGI.ModelRenderer.h"
 #include "EffekseerRendererLLGI.Shader.h"
@@ -19,11 +21,12 @@
 
 namespace EffekseerRendererLLGI
 {
-
 bool PiplineStateKey::operator<(const PiplineStateKey& v) const
 {
 	if (shader != v.shader)
 		return shader < v.shader;
+	if (vertexBufferStride != v.vertexBufferStride)
+		return vertexBufferStride < v.vertexBufferStride;
 	if (state.AlphaBlend != v.state.AlphaBlend)
 		return state.AlphaBlend < v.state.AlphaBlend;
 	if (state.CullingType != v.state.CullingType)
@@ -60,6 +63,9 @@ LLGI::TextureFormatType ConvertTextureFormat(Effekseer::Backend::TextureFormatTy
 	case Effekseer::Backend::TextureFormatType::B8G8R8A8_UNORM:
 		return LLGI::TextureFormatType::B8G8R8A8_UNORM;
 		break;
+	case Effekseer::Backend::TextureFormatType::RG11B10_UFLOAT:
+		return LLGI::TextureFormatType::RG11B10_UFLOAT;
+		break;
 	case Effekseer::Backend::TextureFormatType::R8_UNORM:
 		return LLGI::TextureFormatType::R8_UNORM;
 		break;
@@ -81,6 +87,9 @@ LLGI::TextureFormatType ConvertTextureFormat(Effekseer::Backend::TextureFormatTy
 	case Effekseer::Backend::TextureFormatType::BC3:
 		return LLGI::TextureFormatType::BC3;
 		break;
+	case Effekseer::Backend::TextureFormatType::BC7:
+		return LLGI::TextureFormatType::BC7;
+		break;
 	case Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB:
 		return LLGI::TextureFormatType::R8G8B8A8_UNORM_SRGB;
 		break;
@@ -95,6 +104,9 @@ LLGI::TextureFormatType ConvertTextureFormat(Effekseer::Backend::TextureFormatTy
 		break;
 	case Effekseer::Backend::TextureFormatType::BC3_SRGB:
 		return LLGI::TextureFormatType::BC3_SRGB;
+		break;
+	case Effekseer::Backend::TextureFormatType::BC7_SRGB:
+		return LLGI::TextureFormatType::BC7_SRGB;
 		break;
 	case Effekseer::Backend::TextureFormatType::D32:
 		return LLGI::TextureFormatType::D32;
@@ -129,10 +141,11 @@ LLGI::CommandList* RendererImplemented::GetCurrentCommandList()
 LLGI::PipelineState* RendererImplemented::GetOrCreatePiplineState()
 {
 	PiplineStateKey key;
-	key.state = m_renderState->GetActiveState();
+	key.state = renderState_->GetActiveState();
 	key.shader = currentShader;
 	key.topologyType = currentTopologyType_;
 	key.renderPassPipelineState = currentRenderPassPipelineState_.get();
+	key.vertexBufferStride = currentVertexBufferStride_;
 
 	auto it = piplineStates_.find(key);
 	if (it != piplineStates_.end())
@@ -161,30 +174,24 @@ LLGI::PipelineState* RendererImplemented::GetOrCreatePiplineState()
 		piplineState->VertexLayoutSemantics[i] = currentShader->GetVertexLayouts()->GetElements()[i].Semantic;
 	}
 	piplineState->VertexLayoutCount = static_cast<int32_t>(currentShader->GetVertexLayouts()->GetElements().size());
+	piplineState->VertexBufferStride = currentVertexBufferStride_;
 
 	piplineState->Topology = currentTopologyType_;
 
 	piplineState->IsDepthTestEnabled = key.state.DepthTest;
 	piplineState->IsDepthWriteEnabled = key.state.DepthWrite;
 
-	if (isReversedDepth_)
+	if (key.state.CullingType == ::Effekseer::CullingType::Front)
 	{
-		if (key.state.CullingType == ::Effekseer::CullingType::Back)
-		{
-			piplineState->Culling = LLGI::CullingMode::Clockwise;
-		}
-		else if (key.state.CullingType == ::Effekseer::CullingType::Front)
-		{
-			piplineState->Culling = LLGI::CullingMode::CounterClockwise;
-		}
-		else if (key.state.CullingType == ::Effekseer::CullingType::Double)
-		{
-			piplineState->Culling = LLGI::CullingMode::DoubleSide;
-		}
+		piplineState->Culling = LLGI::CullingMode::Clockwise;
 	}
-	else
+	else if (key.state.CullingType == ::Effekseer::CullingType::Back)
 	{
-		piplineState->Culling = (LLGI::CullingMode)key.state.CullingType;
+		piplineState->Culling = LLGI::CullingMode::CounterClockwise;
+	}
+	else if (key.state.CullingType == ::Effekseer::CullingType::Double)
+	{
+		piplineState->Culling = LLGI::CullingMode::DoubleSide;
 	}
 
 	piplineState->IsBlendEnabled = true;
@@ -273,11 +280,11 @@ LLGI::PipelineState* RendererImplemented::GetOrCreatePiplineState()
 
 RendererImplemented::RendererImplemented(int32_t squareMaxCount)
 	: graphicsDevice_(nullptr)
-	, m_squareMaxCount(squareMaxCount)
-	, m_coordinateSystem(::Effekseer::CoordinateSystem::RH)
-	, m_renderState(nullptr)
-	, m_standardRenderer(nullptr)
-	, m_distortingCallback(nullptr)
+	, squareMaxCount_(squareMaxCount)
+	, standardRenderer_(nullptr)
+	, coordinateSystem_(::Effekseer::CoordinateSystem::RH)
+	, renderState_(nullptr)
+	, distortingCallback_(nullptr)
 {
 }
 
@@ -286,24 +293,29 @@ RendererImplemented::~RendererImplemented()
 	// to prevent objects to be disposed before finish renderings.
 	GetGraphics()->WaitFinish();
 
-	for (auto p : piplineStates_)
-	{
-		p.second->Release();
-	}
-	piplineStates_.clear();
+	ResetPiplineStates();
 
 	commandList_.Reset();
 	GetImpl()->DeleteProxyTextures(this);
 
-	ES_SAFE_DELETE(m_distortingCallback);
-	ES_SAFE_DELETE(m_standardRenderer);
-	ES_SAFE_DELETE(m_renderState);
+	ES_SAFE_DELETE(distortingCallback_);
+	ES_SAFE_DELETE(standardRenderer_);
+	ES_SAFE_DELETE(renderState_);
 
 	if (materialCompiler_ != nullptr)
 	{
 		materialCompiler_->Release();
 		materialCompiler_ = nullptr;
 	}
+}
+
+void RendererImplemented::ResetPiplineStates()
+{
+	for (auto p : piplineStates_)
+	{
+		p.second->Release();
+	}
+	piplineStates_.clear();
 }
 
 void RendererImplemented::OnLostDevice()
@@ -337,7 +349,11 @@ bool RendererImplemented::Initialize(Backend::GraphicsDeviceRef graphicsDevice,
 
 	// Generate vertex buffer
 	{
-		GetImpl()->InternalVertexBuffer = std::make_shared<EffekseerRenderer::VertexBufferRing>(graphicsDevice_, EffekseerRenderer::GetMaximumVertexSizeInAllTypes() * m_squareMaxCount * 4, 3);
+		GetImpl()->InternalVertexBuffer = std::make_shared<EffekseerRenderer::VertexBufferRing>(
+			graphicsDevice_,
+			EffekseerRenderer::GetMaximumVertexSizeInAllTypes() * squareMaxCount_ * 4,
+			3,
+			EffekseerRenderer::VertexBufferRingMode::ExpandableForCommandList);
 		if (!GetImpl()->InternalVertexBuffer->GetIsValid())
 		{
 			GetImpl()->InternalVertexBuffer = nullptr;
@@ -345,12 +361,12 @@ bool RendererImplemented::Initialize(Backend::GraphicsDeviceRef graphicsDevice,
 		}
 	}
 
-	if (!EffekseerRenderer::GenerateIndexDataStride<int16_t>(graphicsDevice_, m_squareMaxCount, indexBuffer_, indexBufferForWireframe_))
+	if (!EffekseerRenderer::GenerateIndexDataStride<int16_t>(graphicsDevice_, squareMaxCount_, indexBuffer_, indexBufferForWireframe_))
 	{
 		return false;
 	}
 
-	m_renderState = new RenderState(this);
+	renderState_ = new RenderState(this);
 
 	auto vlUnlit = EffekseerRenderer::GetVertexLayout(graphicsDevice_, EffekseerRenderer::RendererShaderType::Unlit).DownCast<Backend::VertexLayout>();
 	auto vlLit = EffekseerRenderer::GetVertexLayout(graphicsDevice_, EffekseerRenderer::RendererShaderType::Lit).DownCast<Backend::VertexLayout>();
@@ -470,7 +486,7 @@ bool RendererImplemented::Initialize(Backend::GraphicsDeviceRef graphicsDevice,
 	shader_ad_lit->SetVertexConstantBufferSize(sizeof(EffekseerRenderer::StandardRendererVertexBuffer));
 	shader_ad_lit->SetPixelConstantBufferSize(sizeof(EffekseerRenderer::PixelConstantBuffer));
 
-	m_standardRenderer = new EffekseerRenderer::StandardRenderer<RendererImplemented, Shader>(this);
+	standardRenderer_ = new EffekseerRenderer::StandardRenderer<RendererImplemented, Shader>(this);
 
 	GetImpl()->CreateProxyTextures(this);
 	GetImpl()->isSoftParticleEnabled = true;
@@ -486,20 +502,23 @@ void RendererImplemented::SetRestorationOfStatesFlag(bool flag)
 
 void RendererImplemented::ChangeRenderPassPipelineState(LLGI::RenderPassPipelineStateKey key)
 {
+	auto gd = graphicsDevice_.DownCast<EffekseerRendererLLGI::Backend::GraphicsDevice>();
+
 	auto it = renderpassPipelineStates_.find(key);
 	if (it != renderpassPipelineStates_.end())
 	{
 		currentRenderPassPipelineState_ = it->second;
+		gd->SetRenderPassPipelineState(currentRenderPassPipelineState_.get());
 	}
 	else
 	{
-		auto gd = graphicsDevice_.DownCast<EffekseerRendererLLGI::Backend::GraphicsDevice>();
 		auto pipelineState = LLGI::CreateSharedPtr(gd->GetGraphics()->CreateRenderPassPipelineState(key));
 		if (pipelineState != nullptr)
 		{
 			renderpassPipelineStates_[key] = pipelineState;
 		}
 		currentRenderPassPipelineState_ = pipelineState;
+		gd->SetRenderPassPipelineState(currentRenderPassPipelineState_.get());
 	}
 }
 
@@ -515,11 +534,11 @@ bool RendererImplemented::BeginRendering()
 	impl->CalculateCameraProjectionMatrix();
 
 	// initialize states
-	m_renderState->GetActiveState().Reset();
-	m_renderState->Update(true);
+	renderState_->GetActiveState().Reset();
+	renderState_->Update(true);
 
 	// reset renderer
-	m_standardRenderer->ResetAndRenderingIfRequired();
+	standardRenderer_->ResetAndRenderingIfRequired();
 
 	return true;
 }
@@ -534,7 +553,7 @@ bool RendererImplemented::EndRendering()
 	}
 
 	// reset renderer
-	m_standardRenderer->ResetAndRenderingIfRequired();
+	standardRenderer_->ResetAndRenderingIfRequired();
 
 	currentndexBuffer_ = nullptr;
 
@@ -544,6 +563,15 @@ bool RendererImplemented::EndRendering()
 void RendererImplemented::SetCommandList(Effekseer::RefPtr<EffekseerRenderer::CommandList> commandList)
 {
 	commandList_ = commandList;
+
+	if (commandList_ != nullptr && GetImpl()->InternalVertexBuffer != nullptr)
+	{
+		GetImpl()->InternalVertexBuffer->BeginWriteForCommandList();
+	}
+
+	auto device = GetGraphicsDevice().DownCast<Backend::GraphicsDevice>();
+	auto cl = commandList_.DownCast<CommandList>();
+	device->SetCommandList((cl) ? cl->GetInternal() : nullptr);
 }
 
 Effekseer::Backend::IndexBufferRef RendererImplemented::GetIndexBuffer()
@@ -557,12 +585,12 @@ Effekseer::Backend::IndexBufferRef RendererImplemented::GetIndexBuffer()
 
 int32_t RendererImplemented::GetSquareMaxCount() const
 {
-	return m_squareMaxCount;
+	return squareMaxCount_;
 }
 
 ::EffekseerRenderer::RenderStateBase* RendererImplemented::GetRenderState()
 {
-	return m_renderState;
+	return renderState_;
 }
 
 ::Effekseer::SpriteRendererRef RendererImplemented::CreateSpriteRenderer()
@@ -590,6 +618,26 @@ int32_t RendererImplemented::GetSquareMaxCount() const
 	return ::Effekseer::TrackRendererRef(new ::EffekseerRenderer::TrackRendererBase<RendererImplemented, false>(this));
 }
 
+::Effekseer::GpuTimerRef RendererImplemented::CreateGpuTimer()
+{
+	return ::Effekseer::GpuTimerRef(new ::EffekseerRendererLLGI::GpuTimer(this, false));
+}
+
+::Effekseer::GpuParticleSystemRef RendererImplemented::CreateGpuParticleSystem(const Effekseer::GpuParticleSystem::Settings& settings)
+{
+	auto gpuParticleSystem = ::Effekseer::GpuParticleSystemRef(new ::EffekseerRendererLLGI::GpuParticleSystem(this));
+	if (!gpuParticleSystem->InitSystem(settings))
+	{
+		return nullptr;
+	}
+	return gpuParticleSystem;
+}
+
+::Effekseer::GpuParticleFactoryRef RendererImplemented::CreateGpuParticleFactory()
+{
+	return ::Effekseer::GpuParticleFactoryRef(new ::EffekseerRenderer::GpuParticleFactory(GetGraphicsDevice()));
+}
+
 ::Effekseer::TextureLoaderRef RendererImplemented::CreateTextureLoader(::Effekseer::FileInterfaceRef fileInterface)
 {
 	return ::EffekseerRenderer::CreateTextureLoader(graphicsDevice_, fileInterface, ::Effekseer::ColorSpaceType::Gamma);
@@ -607,28 +655,34 @@ int32_t RendererImplemented::GetSquareMaxCount() const
 
 void RendererImplemented::SetBackgroundInternal(LLGI::Texture* background)
 {
-	if (m_backgroundLLGI == nullptr)
+	if (background == nullptr)
 	{
-		m_backgroundLLGI = graphicsDevice_->CreateTexture(background);
+		EffekseerRenderer::Renderer::SetBackground(nullptr);
+		return;
+	}
+
+	if (backgroundLLGI_ == nullptr)
+	{
+		backgroundLLGI_ = graphicsDevice_->CreateTexture(background);
 	}
 	else
 	{
-		auto texture = static_cast<Backend::Texture*>(m_backgroundLLGI.Get());
+		auto texture = static_cast<Backend::Texture*>(backgroundLLGI_.Get());
 		texture->Init(background);
 	}
 
-	EffekseerRenderer::Renderer::SetBackground((background) ? m_backgroundLLGI : nullptr);
+	EffekseerRenderer::Renderer::SetBackground(backgroundLLGI_);
 }
 
 EffekseerRenderer::DistortingCallback* RendererImplemented::GetDistortingCallback()
 {
-	return m_distortingCallback;
+	return distortingCallback_;
 }
 
 void RendererImplemented::SetDistortingCallback(EffekseerRenderer::DistortingCallback* callback)
 {
-	ES_SAFE_DELETE(m_distortingCallback);
-	m_distortingCallback = callback;
+	ES_SAFE_DELETE(distortingCallback_);
+	distortingCallback_ = callback;
 }
 
 void RendererImplemented::SetVertexBuffer(LLGI::Buffer* vertexBuffer, int32_t stride)
@@ -653,7 +707,7 @@ void RendererImplemented::SetIndexBuffer(const Effekseer::Backend::IndexBufferRe
 
 void RendererImplemented::SetLayout(Shader* shader)
 {
-	if (m_renderMode == Effekseer::RenderMode::Normal)
+	if (renderMode_ == Effekseer::RenderMode::Normal)
 	{
 		currentTopologyType_ = LLGI::TopologyType::Triangle;
 	}
@@ -695,7 +749,7 @@ void RendererImplemented::DrawSprites(int32_t spriteCount, int32_t vertexOffset)
 	impl->drawcallCount++;
 	impl->drawvertexCount += spriteCount * 4;
 
-	if (m_renderMode == Effekseer::RenderMode::Normal)
+	if (renderMode_ == Effekseer::RenderMode::Normal)
 	{
 		GetCurrentCommandList()->SetVertexBuffer(
 			currentVertexBuffer_, currentVertexBufferStride_, vertexOffset * currentVertexBufferStride_);
@@ -811,8 +865,28 @@ void RendererImplemented::SetTextures(Shader* shader, Effekseer::Backend::Textur
 
 void RendererImplemented::ResetRenderState()
 {
-	m_renderState->GetActiveState().Reset();
-	m_renderState->Update(true);
+	renderState_->GetActiveState().Reset();
+	renderState_->Update(true);
+}
+
+void RendererImplemented::ResetQuery(LLGI::Query* query)
+{
+	GetCurrentCommandList()->ResetQuery(query);
+}
+
+void RendererImplemented::BeginQuery(LLGI::Query* query, uint32_t queryIndex)
+{
+	GetCurrentCommandList()->BeginQuery(query, queryIndex);
+}
+
+void RendererImplemented::EndQuery(LLGI::Query* query, uint32_t queryIndex)
+{
+	GetCurrentCommandList()->EndQuery(query, queryIndex);
+}
+
+void RendererImplemented::RecordTimestamp(LLGI::Query* query, uint32_t queryIndex)
+{
+	GetCurrentCommandList()->RecordTimestamp(query, queryIndex);
 }
 
 } // namespace EffekseerRendererLLGI

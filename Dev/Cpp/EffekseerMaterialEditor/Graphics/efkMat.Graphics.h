@@ -149,6 +149,7 @@ struct Vertex
 	Vector3 Binormal;
 	Vector3 Tangent;
 	Vector2 UV1;
+	Vector2 UV2;
 	std::array<uint8_t, 4> Color;
 };
 
@@ -262,24 +263,24 @@ public:
 class Mesh
 {
 private:
-	Effekseer::Backend::VertexBufferRef vb = nullptr;
-	Effekseer::Backend::IndexBufferRef ib = nullptr;
-	int32_t indexCount = 0;
+	Effekseer::Backend::VertexBufferRef vertexBuffer_ = nullptr;
+	Effekseer::Backend::IndexBufferRef indexBuffer_ = nullptr;
+	int32_t indexCount_ = 0;
 
 public:
 	Effekseer::Backend::VertexBufferRef GetVertexBuffer()
 	{
-		return vb;
+		return vertexBuffer_;
 	}
 
 	Effekseer::Backend::IndexBufferRef GetIndexBuffer()
 	{
-		return ib;
+		return indexBuffer_;
 	}
 
 	int32_t GetIndexCount()
 	{
-		return indexCount;
+		return indexCount_;
 	}
 
 	static std::shared_ptr<Mesh> Load(std::shared_ptr<Graphics> graphics, const char* path);

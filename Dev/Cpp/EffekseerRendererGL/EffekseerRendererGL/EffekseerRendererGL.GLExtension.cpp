@@ -204,6 +204,10 @@ static FP_glTexImage3D g_glTexImage3D = nullptr;
 
 static FP_glCopyTexSubImage3D g_glCopyTexSubImage3D = nullptr;
 
+typedef const GLubyte*(EFK_STDCALL* FP_glGetStringi)(GLenum name, GLuint index);
+
+static FP_glGetStringi g_glGetStringi = nullptr;
+
 #elif defined(__EFFEKSEER_RENDERER_GLES2__)
 
 typedef void (*FP_glGenVertexArraysOES)(GLsizei n, GLuint* arrays);
@@ -264,6 +268,7 @@ static bool g_isSupportedVertexArray = false;
 static bool g_isSurrpotedBufferRange = false;
 static bool g_isSurrpotedMapBuffer = false;
 static bool g_isSupportedQueries = false;
+static bool g_isSupportedBPTC = false;
 static OpenGLDeviceType g_deviceType = OpenGLDeviceType::OpenGL2;
 
 #if _WIN32
@@ -330,6 +335,7 @@ bool Initialize(OpenGLDeviceType deviceType, bool isExtensionsEnabled)
 	if (g_isInitialized)
 		return true;
 	g_deviceType = deviceType;
+	g_isSupportedBPTC = false;
 #if _WIN32
 	GET_PROC_REQ(glDeleteBuffers);
 	GET_PROC_REQ(glCreateShader);
@@ -444,7 +450,7 @@ bool Initialize(OpenGLDeviceType deviceType, bool isExtensionsEnabled)
 	g_isSurrpotedBufferRange = true;
 	g_isSurrpotedMapBuffer = true;
 #else
-	char* glExtensions = (char*)glGetString(GL_EXTENSIONS);
+	const char* glExtensionsGLES2 = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
 
 	if (isExtensionsEnabled)
 	{
@@ -460,10 +466,10 @@ bool Initialize(OpenGLDeviceType deviceType, bool isExtensionsEnabled)
 	}
 
 	g_isSupportedVertexArray = (g_glGenVertexArraysOES && g_glDeleteVertexArraysOES && g_glBindVertexArrayOES &&
-								((glExtensions && strstr(glExtensions, "OES_vertex_array_object")) ? true : false));
+								((glExtensionsGLES2 && strstr(glExtensionsGLES2, "OES_vertex_array_object")) ? true : false));
 #else
 	g_isSupportedVertexArray = (g_glGenVertexArraysOES && g_glDeleteVertexArraysOES && g_glBindVertexArrayOES &&
-								((glExtensions && strstr(glExtensions, "GL_OES_vertex_array_object")) ? true : false));
+								((glExtensionsGLES2 && strstr(glExtensionsGLES2, "GL_OES_vertex_array_object")) ? true : false));
 #endif
 
 	// Some smartphone causes segmentation fault.
@@ -480,7 +486,8 @@ bool Initialize(OpenGLDeviceType deviceType, bool isExtensionsEnabled)
 	}
 	g_isSurrpotedBufferRange = (g_glMapBufferRangeEXT && g_glUnmapBufferOES);
 	g_isSurrpotedMapBuffer =
-		(g_glMapBufferOES && g_glUnmapBufferOES && ((glExtensions && strstr(glExtensions, "GL_OES_mapbuffer")) ? true : false));
+		(g_glMapBufferOES && g_glUnmapBufferOES &&
+		 ((glExtensionsGLES2 && strstr(glExtensionsGLES2, "GL_OES_mapbuffer")) ? true : false));
 #endif
 
 #endif
@@ -498,6 +505,52 @@ bool Initialize(OpenGLDeviceType deviceType, bool isExtensionsEnabled)
 	}
 
 #endif
+
+#if _WIN32
+	g_glGetStringi = (FP_glGetStringi)wglGetProcAddress("glGetStringi");
+#endif
+
+	const auto isBPTCExtension = [](const char* name) -> bool
+	{
+		return name != nullptr && (strstr(name, "GL_ARB_texture_compression_bptc") != nullptr ||
+								   strstr(name, "GL_EXT_texture_compression_bptc") != nullptr);
+	};
+
+	g_isSupportedBPTC = false;
+
+	if (deviceType == OpenGLDeviceType::OpenGL3 || deviceType == OpenGLDeviceType::OpenGLES3)
+	{
+		// glGetString(GL_EXTENSIONS) is invalid on the OpenGL 3+ core profile,
+		// so enumerate the extensions with glGetStringi.
+#ifndef GL_NUM_EXTENSIONS
+#define GL_NUM_EXTENSIONS 0x821D
+#endif
+		const auto getExtension = [](GLuint index) -> const char*
+		{
+#if _WIN32
+			return g_glGetStringi != nullptr ? reinterpret_cast<const char*>(g_glGetStringi(GL_EXTENSIONS, index)) : nullptr;
+#elif defined(__EFFEKSEER_RENDERER_GL2__) || defined(__EFFEKSEER_RENDERER_GLES2__)
+			return nullptr;
+#else
+			return reinterpret_cast<const char*>(::glGetStringi(GL_EXTENSIONS, index));
+#endif
+		};
+
+		GLint extensionCount = 0;
+		glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+		for (GLint i = 0; i < extensionCount; i++)
+		{
+			if (isBPTCExtension(getExtension(static_cast<GLuint>(i))))
+			{
+				g_isSupportedBPTC = true;
+				break;
+			}
+		}
+	}
+	else
+	{
+		g_isSupportedBPTC = isBPTCExtension(reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)));
+	}
 
 	g_isInitialized = true;
 	return true;
@@ -521,6 +574,11 @@ bool IsSupportedMapBuffer()
 bool IsSupportedQueries()
 {
 	return g_isSupportedQueries;
+}
+
+bool IsSupportedBPTC()
+{
+	return g_isSupportedBPTC;
 }
 
 void MakeMapBufferInvalid()

@@ -30,13 +30,16 @@ public:
 	struct ProfileSample
 	{
 		bool IsValid = false;
-		explicit operator bool() const { return IsValid; }
+		explicit operator bool() const
+		{
+			return IsValid;
+		}
 
 		struct Manager
 		{
 			uint32_t HandleCount = 0;
-			float CPUTime = 0.0f;
-			float GPUTime = 0.0f;
+			float CpuTime = 0.0f;
+			float GpuTime = 0.0f;
 		};
 		std::vector<Manager> Managers;
 
@@ -44,7 +47,7 @@ public:
 		{
 			std::u16string Key;
 			uint32_t HandleCount = 0;
-			float GPUTime = 0.0f;
+			float GpuTime = 0.0f;
 		};
 		std::vector<Effect> Effects;
 	};

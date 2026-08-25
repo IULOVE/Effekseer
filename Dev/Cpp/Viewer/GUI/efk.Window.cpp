@@ -14,6 +14,89 @@
 namespace efk
 {
 
+#ifdef _WIN32
+namespace
+{
+
+bool GetWindowMonitorInfo(HWND hwnd, MONITORINFO& monitorInfo)
+{
+	monitorInfo = {};
+	monitorInfo.cbSize = sizeof(MONITORINFO);
+
+	HMONITOR monitor = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+	return monitor != nullptr && ::GetMonitorInfo(monitor, &monitorInfo) != FALSE;
+}
+
+RECT GetAdjustedWorkArea(const MONITORINFO& monitorInfo)
+{
+	constexpr LONG offset = 2;
+	const RECT& monitorRect = monitorInfo.rcMonitor;
+	RECT workRect = monitorInfo.rcWork;
+
+	if (monitorRect.left < workRect.left)
+	{
+		workRect.left += offset;
+	}
+	if (workRect.right < monitorRect.right)
+	{
+		workRect.right -= offset;
+	}
+	if (monitorRect.top < workRect.top)
+	{
+		workRect.top += offset;
+	}
+	if (workRect.bottom < monitorRect.bottom)
+	{
+		workRect.bottom -= offset;
+	}
+
+	return workRect;
+}
+
+void ApplyWorkAreaToMaxInfo(HWND hwnd, MINMAXINFO* maxInfo)
+{
+	MONITORINFO monitorInfo;
+	if (!GetWindowMonitorInfo(hwnd, monitorInfo))
+	{
+		return;
+	}
+
+	const RECT& monitorRect = monitorInfo.rcMonitor;
+	const RECT workRect = GetAdjustedWorkArea(monitorInfo);
+	maxInfo->ptMaxPosition.x = workRect.left - monitorRect.left;
+	maxInfo->ptMaxPosition.y = workRect.top - monitorRect.top;
+	maxInfo->ptMaxSize.x = workRect.right - workRect.left;
+	maxInfo->ptMaxSize.y = workRect.bottom - workRect.top;
+}
+
+void FitMaximizedWindowToWorkArea(HWND hwnd)
+{
+	WINDOWPLACEMENT placement = {};
+	placement.length = sizeof(WINDOWPLACEMENT);
+	if (!::GetWindowPlacement(hwnd, &placement) || placement.showCmd != SW_MAXIMIZE)
+	{
+		return;
+	}
+
+	MONITORINFO monitorInfo;
+	if (!GetWindowMonitorInfo(hwnd, monitorInfo))
+	{
+		return;
+	}
+
+	const RECT workRect = GetAdjustedWorkArea(monitorInfo);
+	::SetWindowPos(hwnd,
+				   nullptr,
+				   workRect.left,
+				   workRect.top,
+				   workRect.right - workRect.left,
+				   workRect.bottom - workRect.top,
+				   SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+}
+
+} // namespace
+#endif
+
 void GLFW_ResizeCallback(GLFWwindow* w, int x, int y)
 {
 	auto w_ = (Window*)glfwGetWindowUserPointer(w);
@@ -142,6 +225,7 @@ bool Window::Initialize(std::shared_ptr<Effekseer::MainWindow> mainWindow, Effek
 		DWORD wndStyle = ::GetWindowLong(hwnd, GWL_STYLE);
 		wndStyle |= WS_SIZEBOX | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 		::SetWindowLong(hwnd, GWL_STYLE, wndStyle);
+		FitMaximizedWindowToWorkArea(hwnd);
 	}
 #endif
 
@@ -325,6 +409,9 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
 	switch (msg)
 	{
+	case WM_GETMINMAXINFO:
+		ApplyWorkAreaToMaxInfo(hwnd, (MINMAXINFO*)lparam);
+		return 0;
 	case WM_NCCALCSIZE:
 	{
 		WINDOWPLACEMENT placement;
@@ -351,13 +438,22 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 		GetClientRect(hwnd, &rect);
 		if (point.x >= rect.left && point.x < rect.right)
 		{
-
-			if (point.y >= rect.top && point.y < rect.top + 6 && !window->maximized)
+			const float dpiScale = window->mainWindow_->GetDPIScale();
+			const float resizeBorderHeight = 6.0f * dpiScale;
+			float titleBarHeight = 32.0f * dpiScale;
+			if (GImGui != nullptr)
 			{
-				glfwSetCursor(window->window, window->vertResize);
+				if (ImGuiWindow* mainMenu = ImGui::FindWindowByName("##MainMenuBar"))
+				{
+					titleBarHeight = mainMenu->Size.y;
+				}
+			}
+
+			if (point.y >= rect.top && point.y < rect.top + resizeBorderHeight && !window->maximized)
+			{
 				return HTTOP;
 			}
-			else if (point.y >= rect.top && point.y < rect.top + 32 * window->mainWindow_->GetDPIScale() && ImGui::GetHoveredID() == 0 && GImGui->HoveredWindow == ImGui::FindWindowByName("##MainMenuBar"))
+			else if (GImGui != nullptr && point.y >= rect.top && point.y < rect.top + titleBarHeight && ImGui::GetHoveredID() == 0 && GImGui->HoveredWindow == ImGui::FindWindowByName("##MainMenuBar"))
 			{
 				return HTCAPTION;
 			}

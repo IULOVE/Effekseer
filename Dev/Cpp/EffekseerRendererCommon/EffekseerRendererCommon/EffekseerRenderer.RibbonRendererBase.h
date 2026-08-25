@@ -31,11 +31,11 @@ class RibbonRendererBase : public ::Effekseer::RibbonRenderer, public ::Effeksee
 {
 private:
 protected:
-	RENDERER* m_renderer;
-	int32_t m_ribbonCount;
+	RENDERER* renderer_;
+	int32_t ribbonCount_;
 
-	int32_t m_ringBufferOffset;
-	uint8_t* m_ringBufferData;
+	int32_t ringBufferOffset_;
+	uint8_t* ringBufferData_;
 
 	Effekseer::CustomAlignedVector<efkRibbonInstanceParam> instances;
 	Effekseer::SplineGenerator spline_left;
@@ -54,6 +54,12 @@ protected:
 		{
 			return;
 		}
+
+		const auto cameraForRendering = TransformCameraMatrixToEffectSpace(camera, parameter.RenderingCoordinateTransform);
+		const auto cameraFrontForRendering = TransformCameraFrontToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraFrontDirection()), parameter.RenderingCoordinateTransform);
+		const auto cameraPositionForRendering = TransformCameraPositionToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraPosition()), parameter.RenderingCoordinateTransform);
 
 		// Calculate spline
 		if (parameter.SplineDivision > 1)
@@ -74,7 +80,7 @@ protected:
 
 					if (parameter.EnableViewOffset)
 					{
-						ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+						ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 					}
 
 					::Effekseer::SIMD::Vec3f s;
@@ -85,8 +91,8 @@ protected:
 					ApplyDepthParameters(r,
 										 t,
 										 s,
-										 m_renderer->GetCameraFrontDirection(),
-										 m_renderer->GetCameraPosition(),
+										 cameraFrontForRendering,
+										 cameraPositionForRendering,
 										 parameter.DepthParameterPtr,
 										 parameter.IsRightHand);
 
@@ -99,7 +105,7 @@ protected:
 					::Effekseer::SIMD::Vec3f U;
 
 					U = ::Effekseer::SIMD::Vec3f(r.X.GetY(), r.Y.GetY(), r.X.GetY());
-					F = ::Effekseer::SIMD::Vec3f(-m_renderer->GetCameraFrontDirection()).GetNormal();
+					F = -cameraFrontForRendering.GetNormal();
 					R = ::Effekseer::SIMD::Vec3f::Cross(U, F).GetNormal();
 					F = ::Effekseer::SIMD::Vec3f::Cross(R, U).GetNormal();
 
@@ -128,12 +134,12 @@ protected:
 
 					if (parameter.EnableViewOffset == true)
 					{
-						ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+						ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 					}
 
 					ApplyDepthParameters(mat,
-										 m_renderer->GetCameraFrontDirection(),
-										 m_renderer->GetCameraPosition(),
+										 cameraFrontForRendering,
+										 cameraPositionForRendering,
 										 // s,
 										 parameter.DepthParameterPtr,
 										 parameter.IsRightHand);
@@ -150,7 +156,7 @@ protected:
 			spline_right.Calculate();
 		}
 
-		StrideView<VERTEX> verteies(m_ringBufferData, stride_, vertexCount_);
+		StrideView<VERTEX> verteies(ringBufferData_, stride_, vertexCount_);
 		for (size_t loop = 0; loop < instances.size(); loop++)
 		{
 			auto& param = instances[loop];
@@ -207,7 +213,7 @@ protected:
 
 					if (parameter.EnableViewOffset)
 					{
-						ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+						ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 					}
 
 					::Effekseer::SIMD::Vec3f s;
@@ -218,8 +224,8 @@ protected:
 					ApplyDepthParameters(r,
 										 t,
 										 s,
-										 m_renderer->GetCameraFrontDirection(),
-										 m_renderer->GetCameraPosition(),
+										 cameraFrontForRendering,
+										 cameraPositionForRendering,
 										 parameter.DepthParameterPtr,
 										 parameter.IsRightHand);
 
@@ -239,7 +245,7 @@ protected:
 
 						U = ::Effekseer::SIMD::Vec3f(r.X.GetY(), r.Y.GetY(), r.Z.GetY());
 
-						F = ::Effekseer::SIMD::Vec3f(-m_renderer->GetCameraFrontDirection()).GetNormal();
+						F = -cameraFrontForRendering.GetNormal();
 						R = ::Effekseer::SIMD::Vec3f::Cross(U, F).GetNormal();
 						F = ::Effekseer::SIMD::Vec3f::Cross(R, U).GetNormal();
 
@@ -273,12 +279,12 @@ protected:
 
 						if (parameter.EnableViewOffset == true)
 						{
-							ApplyViewOffset(mat, camera, param.ViewOffsetDistance);
+							ApplyViewOffset(mat, cameraForRendering, param.ViewOffsetDistance);
 						}
 
 						ApplyDepthParameters(mat,
-											 m_renderer->GetCameraFrontDirection(),
-											 m_renderer->GetCameraPosition(),
+											 cameraFrontForRendering,
+											 cameraPositionForRendering,
 											 // s,
 											 parameter.DepthParameterPtr,
 											 parameter.IsRightHand);
@@ -288,6 +294,11 @@ protected:
 							verteies[i].Pos = ToStruct(::Effekseer::SIMD::Vec3f::Transform(verteies[i].Pos, mat));
 						}
 					}
+				}
+
+				for (int idx : {0, 1, 4, 5})
+				{
+					verteies[idx].SetParticleTime(param.ParticleTimes[0], param.ParticleTimes[1]);
 				}
 
 				if (isFirst || isLast)
@@ -305,7 +316,7 @@ protected:
 
 				if (!isFirst)
 				{
-					m_ribbonCount++;
+					ribbonCount_++;
 				}
 
 				if (isLast)
@@ -315,9 +326,15 @@ protected:
 			}
 		}
 
+		StrideView<VERTEX> transformedVertices(ringBufferData_, stride_, vertexCount_);
+		if (parameter.RenderingTransform.IsEnabled)
+		{
+			TransformVertexes(transformedVertices, vertexCount_, parameter.RenderingTransform.Transform);
+		}
+
 		if (VertexNormalRequired<VERTEX>())
 		{
-			StrideView<VERTEX> vs_(m_ringBufferData, stride_, vertexCount_);
+			StrideView<VERTEX> vs_(ringBufferData_, stride_, vertexCount_);
 			Effekseer::SIMD::Vec3f axisBefore{};
 
 			for (size_t i = 0; i < (instances.size() - 1) * parameter.SplineDivision + 1; i++)
@@ -358,11 +375,15 @@ protected:
 				{
 					normal = -normal;
 				}
+				if (parameter.RenderingTransform.ReversesWinding)
+				{
+					normal = -normal;
+				}
 
 				if (isFirst_)
 				{
 					const auto packedNormal = PackVector3DF(normal);
-					const auto packedTangent = PackVector3DF(tangent);
+					const auto packedTangent = PackTangent(tangent, parameter.RenderingTransform.ReversesWinding);
 					vs_[0].SetPackedNormal(packedNormal, FLIP_RGB);
 					vs_[0].SetPackedTangent(packedTangent, FLIP_RGB);
 					vs_[1].SetPackedNormal(packedNormal, FLIP_RGB);
@@ -377,7 +398,7 @@ protected:
 				else if (isLast_)
 				{
 					const auto packedNormal = PackVector3DF(normal);
-					const auto packedTangent = PackVector3DF(tangent);
+					const auto packedTangent = PackTangent(tangent, parameter.RenderingTransform.ReversesWinding);
 					vs_[0].SetPackedNormal(packedNormal, FLIP_RGB);
 					vs_[0].SetPackedTangent(packedTangent, FLIP_RGB);
 					vs_[1].SetPackedNormal(packedNormal, FLIP_RGB);
@@ -392,7 +413,7 @@ protected:
 				else
 				{
 					const auto packedNormal = PackVector3DF(normal);
-					const auto packedTangent = PackVector3DF(tangent);
+					const auto packedTangent = PackTangent(tangent, parameter.RenderingTransform.ReversesWinding);
 					for (int offset : {0, 6})
 					{
 						vs_[0 + offset].SetPackedNormal(packedNormal, FLIP_RGB);
@@ -428,7 +449,7 @@ protected:
 		// custom parameter
 		if (customData1Count_ > 0)
 		{
-			StrideView<float> custom(m_ringBufferData + sizeof(DynamicVertex), stride_, vertexCount_);
+			StrideView<float> custom(ringBufferData_ + sizeof(DynamicVertex), stride_, vertexCount_);
 			for (size_t loop = 0; loop < instances.size() - 1; loop++)
 			{
 				auto& param = instances[loop];
@@ -447,7 +468,7 @@ protected:
 
 		if (customData2Count_ > 0)
 		{
-			StrideView<float> custom(m_ringBufferData + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, vertexCount_);
+			StrideView<float> custom(ringBufferData_ + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, vertexCount_);
 			for (size_t loop = 0; loop < instances.size() - 1; loop++)
 			{
 				auto& param = instances[loop];
@@ -467,10 +488,10 @@ protected:
 
 public:
 	RibbonRendererBase(RENDERER* renderer)
-		: m_renderer(renderer)
-		, m_ribbonCount(0)
-		, m_ringBufferOffset(0)
-		, m_ringBufferData(nullptr)
+		: renderer_(renderer)
+		, ribbonCount_(0)
+		, ringBufferOffset_(0)
+		, ringBufferData_(nullptr)
 	{
 	}
 
@@ -483,12 +504,12 @@ protected:
 					const efkRibbonInstanceParam& instanceParameter,
 					const ::Effekseer::SIMD::Mat44f& camera)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
 		if (instanceParameter.InstanceCount <= 1)
 			return;
 
-		const auto& state = m_renderer->GetStandardRenderer()->GetState();
+		const auto& state = renderer_->GetStandardRenderer()->GetState();
 		const ShaderParameterCollector& collector = state.Collector;
 		if (collector.ShaderType == RendererShaderType::Material)
 		{
@@ -525,7 +546,7 @@ protected:
 							const efkRibbonInstanceParam& instanceParameter,
 							const ::Effekseer::SIMD::Mat44f& camera)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
 		if (instanceParameter.InstanceCount < 2)
 			return;
@@ -552,7 +573,7 @@ protected:
 public:
 	void BeginRenderingGroup(const efkRibbonNodeParam& param, int32_t count, void* userData) override
 	{
-		m_ribbonCount = 0;
+		ribbonCount_ = 0;
 		int32_t vertexCount = ((count - 1) * param.SplineDivision) * 8;
 		if (vertexCount <= 0)
 			return;
@@ -607,25 +628,25 @@ public:
 		state.LocalTime = param.LocalTime;
 
 		state.CopyMaterialFromParameterToState(
-			m_renderer,
+			renderer_,
 			param.EffectPointer,
 			param.BasicParameterPtr);
 
 		customData1Count_ = state.CustomData1Count;
 		customData2Count_ = state.CustomData2Count;
 
-		m_renderer->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, vertexCount, stride_, (void*&)m_ringBufferData);
+		renderer_->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, vertexCount, stride_, (void*&)ringBufferData_);
 		vertexCount_ = vertexCount;
 	}
 
 	void Rendering(const efkRibbonNodeParam& parameter, const efkRibbonInstanceParam& instanceParameter, void* userData) override
 	{
-		Rendering_(parameter, instanceParameter, m_renderer->GetCameraMatrix());
+		Rendering_(parameter, instanceParameter, renderer_->GetCameraMatrix());
 	}
 
 	void EndRendering(const efkRibbonNodeParam& parameter, void* userData) override
 	{
-		m_renderer->GetStandardRenderer()->EndRenderingAndRenderingIfRequired();
+		renderer_->GetStandardRenderer()->EndRenderingAndRenderingIfRequired();
 	}
 };
 //----------------------------------------------------------------------------------

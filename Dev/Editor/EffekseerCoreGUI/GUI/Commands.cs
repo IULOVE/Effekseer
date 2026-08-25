@@ -441,8 +441,9 @@ namespace Effekseer.GUI
 			var selected = Core.SelectedNode;
 			if (selected != null)
 			{
-				var renameNode = new GUI.Dialog.RenameNode();
-				renameNode.Show(selected);
+				//var renameNode = new GUI.Dialog.RenameNode();
+				//renameNode.Show(selected);
+				Core.RenameNode(selected);
 				return true;
 			}
 			return false;
@@ -569,7 +570,12 @@ namespace Effekseer.GUI
 		{
 			try
 			{
-				System.Diagnostics.Process.Start(url);
+				var info = new System.Diagnostics.ProcessStartInfo
+				{
+					FileName = url,
+					UseShellExecute = true
+				};
+				System.Diagnostics.Process.Start(info);
 			}
 			catch
 			{

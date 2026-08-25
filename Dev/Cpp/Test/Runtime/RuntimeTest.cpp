@@ -17,14 +17,24 @@
 #include <Runtime/EffectPlatformVulkan.h>
 #endif
 
+#ifdef __EFFEKSEER_BUILD_WEBGPU__
+#include <Runtime/EffectPlatformWebGPU.h>
+#endif
+
 #include "../Effekseer/Effekseer/Effekseer.Base.h"
-#include "../Effekseer/Effekseer/Noise/CurlNoise.h"
+#include "../Effekseer/Effekseer/Noise/Effekseer.CurlNoise.h"
 #include "../TestHelper.h"
 #include <iostream>
 
 void BasicRuntimeDeviceLostTest()
 {
 #ifdef _WIN32
+	auto logStage = [](const std::string& stage)
+	{
+		std::cout << "[DeviceLost] " << stage << std::endl;
+	};
+
+	logStage("create DX9 platform");
 	auto platform = std::make_shared<EffectPlatformDX9>();
 
 	srand(0);
@@ -32,35 +42,47 @@ void BasicRuntimeDeviceLostTest()
 	EffectPlatformInitializingParameter param;
 	// To make fullscreen enabled
 	param.WindowSize = {640, 480};
+	logStage("initialize DX9 platform");
 	platform->Initialize(param);
 
+	logStage("play SimpleLaser.efk");
 	platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/10/SimpleLaser.efk").c_str());
+	logStage("play Model_Parameters1.efk");
 	platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/14/Model_Parameters1.efk").c_str());
+	logStage("play ProcedualModel01.efkefc");
 	platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/16/ProcedualModel01.efkefc").c_str());
 
-	for (size_t i = 0; i < 20; i++)
+	auto updateFrames = [&](const char* phase)
 	{
-		platform->Update();
-	}
+		logStage(std::string("update phase=") + phase + " begin");
+		for (size_t i = 0; i < 20; i++)
+		{
+			platform->Update();
+		}
+		logStage(std::string("update phase=") + phase + " complete");
+	};
+
+	updateFrames("windowed-before-reset");
+	logStage("take screenshot 0_Lost1.png");
 	platform->TakeScreenshot("0_Lost1.png");
 
+	logStage("set fullscreen=true");
 	platform->SetFullscreen(true);
 
-	for (size_t i = 0; i < 20; i++)
-	{
-		platform->Update();
-	}
+	updateFrames("fullscreen-after-reset");
+	logStage("take screenshot 0_Lost2.png");
 	platform->TakeScreenshot("0_Lost2.png");
 
+	logStage("set fullscreen=false");
 	platform->SetFullscreen(false);
 
-	for (size_t i = 0; i < 20; i++)
-	{
-		platform->Update();
-	}
+	updateFrames("windowed-after-reset");
+	logStage("take screenshot 0_Lost3.png");
 	platform->TakeScreenshot("0_Lost3.png");
 
+	logStage("terminate DX9 platform");
 	platform->Terminate();
+	logStage("completed");
 #endif
 }
 
@@ -397,7 +419,7 @@ void ReloadTest()
 
 		platform->GetEffects()[0]->Reload(&manager, 1, effectData.data(), static_cast<int32_t>(effectData.size()));
 
-		//platform->Update();
+		// platform->Update();
 
 		platform->Draw();
 
@@ -492,6 +514,14 @@ void InstanceDisposeTest()
 #ifdef __EFFEKSEER_BUILD_VULKAN__
 	{
 		auto platform = std::make_shared<EffectPlatformVulkan>();
+		InstanceDisposeTestPlatform(platform.get());
+		platform->Terminate();
+	}
+#endif
+
+#ifdef __EFFEKSEER_BUILD_WEBGPU__
+	{
+		auto platform = std::make_shared<EffectPlatformWebGPU>();
 		InstanceDisposeTestPlatform(platform.get());
 		platform->Terminate();
 	}
@@ -620,7 +650,8 @@ void CullingTest()
 
 void RenderLimitTest()
 {
-	auto test = [](EffectPlatform* platform) {
+	auto test = [](EffectPlatform* platform)
+	{
 		EffectPlatformInitializingParameter param;
 		param.SpriteCount = 10;
 		platform->Initialize(param);
@@ -652,6 +683,13 @@ void RenderLimitTest()
 #ifdef __EFFEKSEER_BUILD_VULKAN__
 	{
 		auto platform = std::make_shared<EffectPlatformVulkan>();
+		test(platform.get());
+	}
+#endif
+
+#ifdef __EFFEKSEER_BUILD_WEBGPU__
+	{
+		auto platform = std::make_shared<EffectPlatformWebGPU>();
 		test(platform.get());
 	}
 #endif
@@ -706,7 +744,8 @@ void SRGBLinearTestPlatform(EffectPlatform* platform, std::string baseResultPath
 	platform->Initialize(param);
 	platform->GetRenderer()->SetMaintainGammaColorInLinearColorSpace(true);
 
-	auto single10Test = [&](const char16_t* name, const char* savename) -> void {
+	auto single10Test = [&](const char16_t* name, const char* savename) -> void
+	{
 		srand(0);
 		platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/10/" + name + u".efk").c_str());
 
@@ -718,7 +757,8 @@ void SRGBLinearTestPlatform(EffectPlatform* platform, std::string baseResultPath
 		platform->StopAllEffects();
 	};
 
-	auto single14Test = [&](const char16_t* name, const char* savename) -> void {
+	auto single14Test = [&](const char16_t* name, const char* savename) -> void
+	{
 		srand(0);
 		platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/14/" + name + u".efk").c_str());
 
@@ -730,7 +770,8 @@ void SRGBLinearTestPlatform(EffectPlatform* platform, std::string baseResultPath
 		platform->StopAllEffects();
 	};
 
-	auto single15Test = [&](const char16_t* name, const char* savename) -> void {
+	auto single15Test = [&](const char16_t* name, const char* savename) -> void
+	{
 		srand(0);
 		platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/15/" + name + u".efkefc").c_str());
 
@@ -742,7 +783,8 @@ void SRGBLinearTestPlatform(EffectPlatform* platform, std::string baseResultPath
 		platform->StopAllEffects();
 	};
 
-	auto single16Test = [&](const char16_t* name, const char* savename) -> void {
+	auto single16Test = [&](const char16_t* name, const char* savename) -> void
+	{
 		srand(0);
 		platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/16/" + name + u".efkefc").c_str());
 
@@ -788,6 +830,14 @@ void SRGBLinearTest()
 	{
 		auto platform = std::make_shared<EffectPlatformVulkan>();
 		SRGBLinearTestPlatform(platform.get(), "", "_Vulkan");
+		platform->Terminate();
+	}
+#endif
+
+#ifdef __EFFEKSEER_BUILD_WEBGPU__
+	{
+		auto platform = std::make_shared<EffectPlatformWebGPU>();
+		SRGBLinearTestPlatform(platform.get(), "", "_WebGPU");
 		platform->Terminate();
 	}
 #endif
@@ -857,7 +907,8 @@ void LODsTest()
 
 		auto h = platform->Play((GetDirectoryPathAsU16(__FILE__) + u"../../../../TestData/Effects/LODs/SimpleLODs.efkefc").c_str());
 
-		auto setDistanceToEffect = [platform, h](double distance) {
+		auto setDistanceToEffect = [platform, h](double distance)
+		{
 			auto cameraFrontDirection = platform->GetRenderer()->GetCameraFrontDirection();
 			auto cameraPosition = platform->GetRenderer()->GetCameraPosition();
 			platform->GetManager()->SetLocation(h, cameraPosition - cameraFrontDirection * distance);
@@ -895,36 +946,52 @@ void LODsTest()
 
 #if defined(__linux__) || defined(__APPLE__) || defined(WIN32)
 
-TestRegister Runtime_CustomAllocatorTest("Runtime.CustomAllocatorTest", []() -> void { CustomAllocatorTest(); });
+TestRegister Runtime_CustomAllocatorTest("Runtime.CustomAllocatorTest", []() -> void
+										 { CustomAllocatorTest(); });
 
-TestRegister Runtime_InstanceDisposeTest("Runtime.InstanceDisposeTest", []() -> void { InstanceDisposeTest(); });
+TestRegister Runtime_InstanceDisposeTest("Runtime.InstanceDisposeTest", []() -> void
+										 { InstanceDisposeTest(); });
 
-TestRegister Runtime_ReloadTest("Runtime.ReloadTest", []() -> void { ReloadTest(); });
+TestRegister Runtime_ReloadTest("Runtime.ReloadTest", []() -> void
+								{ ReloadTest(); });
 
-TestRegister Runtime_UpdateToMoveTest("Runtime.UpdateToMoveTest", []() -> void { UpdateToMoveTest(); });
+TestRegister Runtime_UpdateToMoveTest("Runtime.UpdateToMoveTest", []() -> void
+									  { UpdateToMoveTest(); });
 
-TestRegister Runtime_MassPlayTest("Runtime.MassPlayTest", []() -> void { MassPlayTest(); });
+TestRegister Runtime_MassPlayTest("Runtime.MassPlayTest", []() -> void
+								  { MassPlayTest(); });
 
-TestRegister Runtime_PlaybackSpeedTest("Runtime.PlaybackSpeedTest", []() -> void { PlaybackSpeedTest(); });
+TestRegister Runtime_PlaybackSpeedTest("Runtime.PlaybackSpeedTest", []() -> void
+									   { PlaybackSpeedTest(); });
 
-TestRegister Runtime_PlaybackRandomSeedTest("Runtime.PlaybackRandomSeedTest", []() -> void { PlaybackRandomSeedTest(); });
+TestRegister Runtime_PlaybackRandomSeedTest("Runtime.PlaybackRandomSeedTest", []() -> void
+											{ PlaybackRandomSeedTest(); });
 
-TestRegister Runtime_StartingFrameTest("Runtime.StartingFrameTest", []() -> void { StartingFrameTest(); });
+TestRegister Runtime_StartingFrameTest("Runtime.StartingFrameTest", []() -> void
+									   { StartingFrameTest(); });
 
-TestRegister Runtime_UpdateHandleTest("Runtime.UpdateHandleTest", []() -> void { UpdateHandleTest(); });
+TestRegister Runtime_UpdateHandleTest("Runtime.UpdateHandleTest", []() -> void
+									  { UpdateHandleTest(); });
 
-TestRegister Runtime_DX11DefferedContextTest("Runtime.DX11DefferedContextTest", []() -> void { DX11DefferedContextTest(); });
+TestRegister Runtime_DX11DefferedContextTest("Runtime.DX11DefferedContextTest", []() -> void
+											 { DX11DefferedContextTest(); });
 
-TestRegister Runtime_BasicRuntimeDeviceLostTest("Runtime.BasicRuntimeDeviceLostTest", []() -> void { BasicRuntimeDeviceLostTest(); });
+TestRegister Runtime_BasicRuntimeDeviceLostTest("Runtime.BasicRuntimeDeviceLostTest", []() -> void
+												{ BasicRuntimeDeviceLostTest(); });
 
-TestRegister Runtime_ProceduralModelCacheTest("Runtime.ProceduralModelCacheTest", []() -> void { ProceduralModelCacheTest(); });
+TestRegister Runtime_ProceduralModelCacheTest("Runtime.ProceduralModelCacheTest", []() -> void
+											  { ProceduralModelCacheTest(); });
 
-TestRegister Runtime_CullingTest("Runtime.CullingTest", []() -> void { CullingTest(); });
+TestRegister Runtime_CullingTest("Runtime.CullingTest", []() -> void
+								 { CullingTest(); });
 
-TestRegister Runtime_RenderLimitTest("Runtime.RenderLimitTest", []() -> void { RenderLimitTest(); });
+TestRegister Runtime_RenderLimitTest("Runtime.RenderLimitTest", []() -> void
+									 { RenderLimitTest(); });
 
-TestRegister Runtime_SRGBLinearTest("Runtime.SRGBLinearTest", []() -> void { SRGBLinearTest(); });
+TestRegister Runtime_SRGBLinearTest("Runtime.SRGBLinearTest", []() -> void
+									{ SRGBLinearTest(); });
 
-TestRegister Runtime_LODsTest("Runtime.LODsTest", []() -> void { LODsTest(); });
+TestRegister Runtime_LODsTest("Runtime.LODsTest", []() -> void
+							  { LODsTest(); });
 
 #endif

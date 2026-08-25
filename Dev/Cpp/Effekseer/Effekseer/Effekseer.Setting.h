@@ -29,11 +29,12 @@ class Setting : public ReferenceObject
 {
 private:
 	//! coordinate system
-	CoordinateSystem m_coordinateSystem;
-	EffectLoaderRef m_effectLoader;
+	CoordinateSystem coordinateSystem_;
+	EffectLoaderRef effectLoader_;
 
 	std::vector<RefPtr<EffectFactory>> effectFactories_;
 	RefPtr<ResourceManager> resourceManager_;
+	GpuParticleFactoryRef gpuParticleFactory_;
 
 protected:
 	Setting();
@@ -212,6 +213,26 @@ public:
 		\~Japanese ジェネレータ
 	*/
 	void SetProceduralMeshGenerator(ProceduralModelGeneratorRef generator);
+
+	/**
+		@brief
+		\~English get a gpu particle system
+		\~Japanese GPUパーティクルファクトリを取得する。
+		@return
+		\~English	gpu particle system
+		\~Japanese GPUパーティクルファクトリ
+	*/
+	GpuParticleFactoryRef GetGpuParticleFactory() const;
+
+	/**
+		@brief
+		\~English specfiy a gpu particle system
+		\~Japanese GPUパーティクルファクトリを設定する。
+		@param	gpu particle system
+		\~English	gpu particle system
+		\~Japanese GPUパーティクルファクトリ
+	*/
+	void SetGpuParticleFactory(GpuParticleFactoryRef gpuParticleFactory);
 
 	/**
 		@brief

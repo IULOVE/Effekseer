@@ -1,187 +1,32 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace Effekseer.GUI.BindableComponent
 {
-	class PathForModel : Control, IParameterControl
+	class PathForModel : PathBase
 	{
-		string id1 = "";
-		string id2 = "";
-		string id3 = "";
-
-		Data.Value.PathForModel binding = null;
-
-		string filePath = string.Empty;
-		bool isHovered = false;
-
-		public bool EnableUndo { get; set; } = true;
-
-		public Data.Value.PathForModel Binding
-		{
-			get
-			{
-				return binding;
-			}
-			set
-			{
-				if (binding == value) return;
-
-				binding = value;
-
-				Read();
-			}
-		}
-
 		public PathForModel()
 		{
-			id1 = "###" + Manager.GetUniqueID().ToString();
-			id2 = "###" + Manager.GetUniqueID().ToString();
-			id3 = "###" + Manager.GetUniqueID().ToString();
+			fileType = FileType.Model;
+			filter = MultiLanguageTextProvider.GetText("ModelFilter");
 		}
 
-		public void SetBinding(object o)
+		protected override void UpdateSubParts(float width)
 		{
-			var o_ = o as Data.Value.PathForModel;
-			Binding = o_;
-		}
-
-		public void FixValue()
-		{
-		}
-
-		public override void OnDisposed()
-		{
-		}
-
-		public override void OnDropped(string path, ref bool handle)
-		{
-			if (isHovered)
+			if (!string.IsNullOrEmpty(filePath))
 			{
-				if (CheckExtension(path))
+				var ext = System.IO.Path.GetExtension(filePath).ToLower();
+
+				if (ext != ".efkmodel")
 				{
-					binding.SetAbsolutePath(path);
-					Read();
-				}
-
-				handle = true;
-			}
-		}
-
-		public override void Update()
-		{
-			isHovered = false;
-
-			if (binding == null) return;
-
-			string dd = null;
-
-			float buttonSizeX = Manager.NativeManager.GetTextLineHeightWithSpacing() * 2;
-
-			if (Manager.NativeManager.Button(MultiLanguageTextProvider.GetText("Load") + id1, buttonSizeX))
-			{
-				btn_load_Click();
-			}
-
-			if (dd == null) dd = DragAndDrops.UpdateFileDst(FileType.Model);
-
-			isHovered = isHovered || Manager.NativeManager.IsItemHovered();
-
-			Manager.NativeManager.SameLine();
-
-			Manager.NativeManager.Text(filePath);
-
-			if (dd == null) dd = DragAndDrops.UpdateFileDst(FileType.Model);
-
-			if (Manager.NativeManager.IsItemHovered())
-			{
-				Manager.NativeManager.SetTooltip(filePath);
-			}
-
-			isHovered = isHovered || Manager.NativeManager.IsItemHovered();
-
-			if (filePath != string.Empty)
-			{
-				var ext = System.IO.Path.GetExtension(filePath).ToLower().Replace(".", "");
-
-				if (Manager.NativeManager.Button(MultiLanguageTextProvider.GetText("Delete") + id2, buttonSizeX))
-				{
-					btn_delete_Click();
-				}
-
-				isHovered = isHovered || Manager.NativeManager.IsItemHovered();
-
-				if(ext != "efkmodel")
-				{
-					Manager.NativeManager.SameLine();
-
-					if (Manager.NativeManager.Button(MultiLanguageTextProvider.GetText("ResetMaginification") + id3, buttonSizeX * 2))
+					if (Manager.NativeManager.Button(MultiLanguageTextProvider.GetText("ResetMaginification")))
 					{
 						btn_reload_Click();
 					}
-
-					isHovered = isHovered || Manager.NativeManager.IsItemHovered();
 				}
 			}
-
-			if (dd != null)
-			{
-				Dropped(dd);
-			}
-		}
-
-		public void Dropped(string path)
-		{
-			if (CheckExtension(path))
-			{
-				LoadFile(path, false);
-				Read();
-			}
-		}
-
-		private void btn_load_Click()
-		{
-			if (binding == null) return;
-
-			var filter = MultiLanguageTextProvider.GetText("ModelFilter");
-			var result = swig.FileDialog.OpenDialog(filter, System.IO.Directory.GetCurrentDirectory());
-
-			if (!string.IsNullOrEmpty(result))
-			{
-				var filepath = result;
-				/*
-				OpenFileDialog ofd = new OpenFileDialog();
-
-				ofd.InitialDirectory = System.IO.Directory.GetCurrentDirectory();
-				ofd.Filter = binding.Filter;
-				ofd.FilterIndex = 2;
-				ofd.Multiselect = false;
-
-				if (ofd.ShowDialog() == DialogResult.OK)
-				{
-				var filepath = ofd.FileName;
-					*/
-
-				LoadFile(filepath, false);
-			}
-			else
-			{
-				return;
-			}
-
-			Read();
-		}
-
-		private void btn_delete_Click()
-		{
-			if (binding == null) return;
-			binding.SetAbsolutePath(string.Empty);
-
-			Read();
 		}
 
 		private void btn_reload_Click()
@@ -194,29 +39,10 @@ namespace Effekseer.GUI.BindableComponent
 			Read();
 		}
 
-		void Read()
+		protected override void LoadFile(string filepath, bool isReloading)
 		{
-			if (binding != null)
-			{
-				filePath = binding.GetRelativePath();
-			}
-			else
-			{
-				filePath = string.Empty;
-			}
-		}
-
-		private bool CheckExtension(string path)
-		{
-			var filters = MultiLanguageTextProvider.GetText("ModelFilter").Split(',');
-			return filters.Any(_ => "." + _ == System.IO.Path.GetExtension(path).ToLower());
-		}
-
-		void LoadFile(string filepath, bool isReloading)
-		{
-
 			// Convert file
-			var ext = System.IO.Path.GetExtension(filepath).ToLower().Replace(".", "");
+			var ext = System.IO.Path.GetExtension(filepath).ToLower();
 			var newFilepath = System.IO.Path.ChangeExtension(filepath, ".efkmodel");
 
 			Effekseer.Utils.ModelInformation modelInfo = new Utils.ModelInformation();
@@ -247,7 +73,7 @@ namespace Effekseer.GUI.BindableComponent
 
 			Dialog.OpenModel omd = new Dialog.OpenModel(modelInfo.Scale);
 
-			if (ext == "fbx" || ext == "mqo")
+			if (CheckExtension(ext) && ext != ".efkmodel")
 			{
 				omd.Show("");
 			}
@@ -263,7 +89,7 @@ namespace Effekseer.GUI.BindableComponent
 			omd.OnOK = () =>
 			{
 
-				if (ext == "fbx")
+				if (CheckExtension(ext) && ext != ".efkmodel")
 				{
 					var oldFilepath = filepath;
 					bool doGenerate = false;
@@ -277,7 +103,7 @@ namespace Effekseer.GUI.BindableComponent
 
 					if (doGenerate)
 					{
-						string converterPath = Manager.GetEntryDirectory() + "/tools/fbxToEffekseerModelConverter";
+						string converterPath = Manager.GetEntryDirectory() + "/tools/EffekseerResourceConverter";
 
 						// japanese file path is not supported.
 						try
@@ -311,7 +137,7 @@ namespace Effekseer.GUI.BindableComponent
 
 						info.FileName = converterPath;
 
-						info.Arguments = "\"" + oldFilepath + "\" \"" + newFilepath + "\" -scale " + omd.Magnification.ToString();
+						info.Arguments = "\"" + oldFilepath + "\" -o \"" + newFilepath + "\" -s " + omd.Magnification.ToString();
 
 						if (!System.IO.File.Exists(oldFilepath))
 						{
@@ -331,12 +157,14 @@ namespace Effekseer.GUI.BindableComponent
 
 						info.UseShellExecute = false;
 						info.RedirectStandardOutput = true;
+						info.RedirectStandardError = true;
 						info.RedirectStandardInput = false;
 						info.CreateNoWindow = true;
 
 						System.Diagnostics.Process p = System.Diagnostics.Process.Start(info);
 
 						string outputs = p.StandardOutput.ReadToEnd();
+						string errors = p.StandardError.ReadToEnd();
 
 						p.WaitForExit();
 						p.Dispose();
@@ -348,75 +176,9 @@ namespace Effekseer.GUI.BindableComponent
 						}
 						else
 						{
-							var msg = " Failed to load. \n" + outputs;
+							var msg = " Failed to load. \n" + outputs + errors;
 
 							swig.GUIManager.show(msg, "Error", swig.DialogStyle.Error, swig.DialogButtons.OK);
-						}
-
-						try
-						{
-							string tempFilePath = Path.GetTempPath() + System.IO.Path.GetFileName(filepath);
-							System.IO.File.Delete(tempFilePath);
-						}
-						catch
-						{
-
-						}
-					}
-				}
-
-				if (ext == "mqo")
-				{
-					var oldFilepath = filepath;
-
-					bool doGenerate = false;
-
-					if (!System.IO.File.Exists(newFilepath) ||
-						System.IO.File.GetLastWriteTime(oldFilepath) != System.IO.File.GetLastWriteTime(newFilepath) ||
-						modelInfo.Scale != omd.Magnification)
-					{
-						doGenerate = true;
-					}
-
-					if (doGenerate)
-					{
-						string converterPath = Manager.GetEntryDirectory() + "/tools/mqoToEffekseerModelConverter";
-
-						// japanese file path is not supported.
-						try
-						{
-							string tempFilePath = Path.GetTempPath() + System.IO.Path.GetFileName(filepath);
-							System.IO.File.Copy(oldFilepath, tempFilePath);
-							oldFilepath = tempFilePath;
-						}
-						catch
-						{
-
-						}
-
-						System.Diagnostics.ProcessStartInfo info = new System.Diagnostics.ProcessStartInfo();
-
-						var os = System.Environment.OSVersion;
-						if (os.Platform == PlatformID.Win32NT ||
-							os.Platform == PlatformID.Win32S ||
-							os.Platform == PlatformID.Win32Windows ||
-							os.Platform == PlatformID.WinCE)
-						{
-							converterPath += ".exe";
-						}
-
-						try
-						{
-							mqoToEffekseerModelConverter.Program.Call(new[] { oldFilepath, newFilepath, "-scale", omd.Magnification.ToString() });
-						}
-						catch
-						{
-
-						}
-
-						if (System.IO.File.Exists(newFilepath))
-						{
-							System.IO.File.SetLastWriteTime(newFilepath, System.IO.File.GetLastWriteTime(oldFilepath));
 						}
 
 						try

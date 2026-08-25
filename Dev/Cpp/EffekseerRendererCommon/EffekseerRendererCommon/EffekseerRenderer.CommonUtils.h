@@ -7,7 +7,7 @@
 #include "EffekseerRendererFlags.h"
 #include <Effekseer.h>
 #include <Effekseer/Material/Effekseer.CompiledMaterial.h>
-#include <Effekseer/Model/SplineGenerator.h>
+#include <Effekseer/Model/Effekseer.SplineGenerator.h>
 #include <algorithm>
 #include <array>
 #include <assert.h>
@@ -39,6 +39,15 @@ inline Effekseer::Color PackVector3DF(const Effekseer::SIMD::Vec3f& v)
 	return ret;
 }
 
+inline Effekseer::Color PackTangent(const Effekseer::SIMD::Vec3f& v, bool reversesWinding)
+{
+	auto ret = PackVector3DF(v);
+	// The alpha channel is otherwise unused. Preserve the tangent-space handedness
+	// so shaders can reconstruct the binormal after a reflection.
+	ret.A = reversesWinding ? 0 : 255;
+	return ret;
+}
+
 inline Effekseer::Vector3D UnpackVector3DF(const Effekseer::Color& v)
 {
 	Effekseer::Vector3D ret;
@@ -65,6 +74,7 @@ struct DynamicVertex
 	};
 
 	float UV2[2];
+	float ParticleTimes[2];
 
 	void SetFlipbookIndexAndNextRate(float value)
 	{
@@ -108,6 +118,12 @@ struct DynamicVertex
 	{
 		UV2[0] = u;
 		UV2[1] = v;
+	}
+
+	void SetParticleTime(float normalized, float seconds)
+	{
+		ParticleTimes[0] = normalized;
+		ParticleTimes[1] = seconds;
 	}
 };
 
@@ -178,6 +194,10 @@ struct LightingVertex
 		UV2[0] = u;
 		UV2[1] = v;
 	}
+
+	void SetParticleTime(float normalized, float seconds)
+	{
+	}
 };
 
 struct SimpleVertex
@@ -196,6 +216,10 @@ struct SimpleVertex
 	{
 	}
 	void SetAlphaThreshold(float value)
+	{
+	}
+
+	void SetParticleTime(float normalized, float seconds)
 	{
 	}
 
@@ -292,6 +316,10 @@ struct AdvancedLightingVertex
 		UV2[0] = u;
 		UV2[1] = v;
 	}
+
+	void SetParticleTime(float normalized, float seconds)
+	{
+	}
 };
 
 struct AdvancedSimpleVertex
@@ -336,6 +364,10 @@ struct AdvancedSimpleVertex
 	}
 
 	void SetPackedNormal(const VertexColor& normal, bool flipRGB)
+	{
+	}
+
+	void SetParticleTime(float normalized, float seconds)
 	{
 	}
 
@@ -739,6 +771,76 @@ inline void TransformVertexes(Vertex& vertexes, int32_t count, const ::Effekseer
 	}
 }
 
+inline Effekseer::SIMD::Vec3f TransformDirection(
+	const Effekseer::SIMD::Vec3f& direction,
+	const Effekseer::SIMD::Mat43f& transform)
+{
+	return Effekseer::SIMD::Vec3f::Transform(direction, transform.Get3x3SubMatrix());
+}
+
+inline Effekseer::SIMD::Vec3f InverseTransformDirection(
+	const Effekseer::SIMD::Vec3f& direction,
+	const Effekseer::SIMD::Mat43f& transform)
+{
+	// Rendering coordinate transforms are orthogonal. Mat43f stores its basis
+	// vectors as columns, so passing those columns as constructor rows builds
+	// the transpose, which is also the inverse.
+	const auto rotation = transform.Get3x3SubMatrix();
+	const Effekseer::SIMD::Mat43f inverse(
+		rotation.X.GetX(), rotation.X.GetY(), rotation.X.GetZ(),
+		rotation.Y.GetX(), rotation.Y.GetY(), rotation.Y.GetZ(),
+		rotation.Z.GetX(), rotation.Z.GetY(), rotation.Z.GetZ(),
+		0.0f, 0.0f, 0.0f);
+	return Effekseer::SIMD::Vec3f::Transform(direction, inverse);
+}
+
+inline Effekseer::SIMD::Vec3f TransformCameraPositionToEffectSpace(
+	const Effekseer::SIMD::Vec3f& value,
+	const Effekseer::EffectRenderingTransformParameter& renderingCoordinateTransform)
+{
+	if (!renderingCoordinateTransform.IsEnabled)
+	{
+		return value;
+	}
+
+	return InverseTransformDirection(value, renderingCoordinateTransform.Transform);
+}
+
+inline Effekseer::SIMD::Vec3f TransformCameraFrontToEffectSpace(
+	const Effekseer::SIMD::Vec3f& value,
+	const Effekseer::EffectRenderingTransformParameter& renderingCoordinateTransform)
+{
+	auto result = TransformCameraPositionToEffectSpace(value, renderingCoordinateTransform);
+	return renderingCoordinateTransform.ReversesCameraFront ? -result : result;
+}
+
+inline bool IsRenderingCameraRightHanded(
+	bool isSimulationRightHanded,
+	const Effekseer::EffectRenderingTransformParameter& renderingCoordinateTransform)
+{
+	return isSimulationRightHanded != renderingCoordinateTransform.ReversesCameraFront;
+}
+
+inline Effekseer::SIMD::Vec3f NormalizeCameraFrontForRenderingSpace(
+	const Effekseer::SIMD::Vec3f& value,
+	bool isSimulationRightHanded,
+	const Effekseer::EffectRenderingTransformParameter& renderingCoordinateTransform)
+{
+	return IsRenderingCameraRightHanded(isSimulationRightHanded, renderingCoordinateTransform) ? value : -value;
+}
+
+inline Effekseer::SIMD::Mat44f TransformCameraMatrixToEffectSpace(
+	const Effekseer::SIMD::Mat44f& camera,
+	const Effekseer::EffectRenderingTransformParameter& renderingCoordinateTransform)
+{
+	if (!renderingCoordinateTransform.IsEnabled)
+	{
+		return camera;
+	}
+
+	return Effekseer::SIMD::Mat44f(renderingCoordinateTransform.Transform) * camera;
+}
+
 inline Effekseer::SIMD::Vec3f SafeNormalize(const Effekseer::SIMD::Vec3f& v)
 {
 	auto lengthSq = v.GetSquaredLength();
@@ -778,6 +880,7 @@ struct MaterialShaderParameterGenerator
 	int32_t VertexModelMatrixOffset = -1;
 	int32_t VertexModelUVOffset = -1;
 	int32_t VertexModelColorOffset = -1;
+	int32_t VertexModelParticleTimeOffset = -1;
 
 	int32_t VertexModelCustomData1Offset = -1;
 	int32_t VertexModelCustomData2Offset = -1;
@@ -811,6 +914,9 @@ struct MaterialShaderParameterGenerator
 			vsOffset += sizeof(float) * 4 * instanceCount;
 
 			VertexModelColorOffset = vsOffset;
+			vsOffset += sizeof(float) * 4 * instanceCount;
+
+			VertexModelParticleTimeOffset = vsOffset;
 			vsOffset += sizeof(float) * 4 * instanceCount;
 
 			VertexInversedFlagOffset = vsOffset;
@@ -1092,6 +1198,8 @@ struct ShaderParameterCollector
 
 			if (IsDepthRequired)
 			{
+				TextureFilterTypes[TextureCount] = Effekseer::TextureFilterType::Nearest;
+				TextureWrapTypes[TextureCount] = Effekseer::TextureWrapType::Clamp;
 				DepthIndex = TextureCount;
 				TextureCount += 1;
 			}
@@ -1142,7 +1250,7 @@ struct ShaderParameterCollector
 			if (IsDepthRequired)
 			{
 				// Store from external
-				TextureFilterTypes[TextureCount] = Effekseer::TextureFilterType::Linear;
+				TextureFilterTypes[TextureCount] = Effekseer::TextureFilterType::Nearest;
 				TextureWrapTypes[TextureCount] = Effekseer::TextureWrapType::Clamp;
 				DepthIndex = TextureCount;
 				TextureCount += 1;
@@ -1163,6 +1271,8 @@ struct ShaderParameterCollector
 
 				if (IsDepthRequired)
 				{
+					TextureFilterTypes[TextureCount] = Effekseer::TextureFilterType::Nearest;
+					TextureWrapTypes[TextureCount] = Effekseer::TextureWrapType::Clamp;
 					DepthIndex = TextureCount;
 					TextureCount += 1;
 				}
@@ -1180,6 +1290,8 @@ struct ShaderParameterCollector
 
 				if (IsDepthRequired)
 				{
+					TextureFilterTypes[TextureCount] = Effekseer::TextureFilterType::Nearest;
+					TextureWrapTypes[TextureCount] = Effekseer::TextureWrapType::Clamp;
 					DepthIndex = TextureCount;
 					TextureCount += 1;
 				}
@@ -1666,8 +1778,7 @@ inline RendererStateFlipbook ToState(const Effekseer::NodeRendererFlipbookParame
 template <typename T>
 bool GenerateIndexDataStride(Effekseer::Backend::GraphicsDeviceRef graphicsDevice, int32_t squareMaxCount, Effekseer::Backend::IndexBufferRef& indexBuffer, Effekseer::Backend::IndexBufferRef& indexBufferForWireframe)
 {
-	auto stride = sizeof(T) == 2 ? 
-		Effekseer::Backend::IndexBufferStrideType::Stride2 : Effekseer::Backend::IndexBufferStrideType::Stride4;
+	auto stride = sizeof(T) == 2 ? Effekseer::Backend::IndexBufferStrideType::Stride2 : Effekseer::Backend::IndexBufferStrideType::Stride4;
 
 	{
 		std::vector<T> buffer;

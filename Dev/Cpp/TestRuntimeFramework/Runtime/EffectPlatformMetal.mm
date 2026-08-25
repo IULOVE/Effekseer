@@ -1,11 +1,11 @@
 #include "EffectPlatformMetal.h"
-#include "../../EffekseerRendererMetal/EffekseerRendererMetal.h"
 #include "../../3rdParty/LLGI/src/Metal/LLGI.CommandListMetal.h"
+#include "../../3rdParty/LLGI/src/Metal/LLGI.CompilerMetal.h"
 #include "../../3rdParty/LLGI/src/Metal/LLGI.GraphicsMetal.h"
+#include "../../3rdParty/LLGI/src/Metal/LLGI.Metal_Impl.h"
 #include "../../3rdParty/LLGI/src/Metal/LLGI.PlatformMetal.h"
 #include "../../3rdParty/LLGI/src/Metal/LLGI.TextureMetal.h"
-#include "../../3rdParty/LLGI/src/Metal/LLGI.CompilerMetal.h"
-#include "../../3rdParty/LLGI/src/Metal/LLGI.Metal_Impl.h"
+#include "../../EffekseerRendererMetal/EffekseerRendererMetal.h"
 #include "../3rdParty/LLGI/src/LLGI.CommandList.h"
 
 #include "../../3rdParty/LLGI/src/LLGI.Compiler.h"
@@ -131,27 +131,30 @@ fragment main0_out main0(main0_in in [[stage_in]], texture2d<float> txt [[textur
 class DistortingCallbackMetal : public EffekseerRenderer::DistortingCallback
 {
 	EffectPlatformMetal* platform_ = nullptr;
-    Effekseer::Backend::TextureRef texture_ = nullptr;
-    
+	Effekseer::Backend::TextureRef texture_ = nullptr;
+
 public:
-	DistortingCallbackMetal(EffectPlatformMetal* platform) : platform_(platform)
+	DistortingCallbackMetal(EffectPlatformMetal* platform)
+		: platform_(platform)
 	{
 	}
 
 	virtual ~DistortingCallbackMetal()
 	{
-        texture_.Reset();
+		texture_.Reset();
 	}
 
 	bool OnDistorting(EffekseerRenderer::Renderer* renderer) override
 	{
-        if (texture_ == nullptr)
+		platform_->UpdateBackgroundTextureForDistortion();
+
+		if (texture_ == nullptr)
 		{
-			auto tex = (LLGI::TextureMetal*)(platform_->GetCheckedTexture());
+			auto tex = (LLGI::TextureMetal*)(platform_->GetBackgroundTexture());
 			texture_ = EffekseerRendererMetal::CreateTexture(renderer->GetGraphicsDevice(), tex->GetTexture());
 		}
 
-        renderer->SetBackground(texture_);
+		renderer->SetBackground(texture_);
 
 		return true;
 	}
@@ -159,9 +162,9 @@ public:
 
 void EffectPlatformMetal::CreateShaders()
 {
-    auto compiler =  new LLGI::CompilerMetal();
-    compiler->Initialize();
-    
+	auto compiler = new LLGI::CompilerMetal();
+	compiler->Initialize();
+
 	LLGI::CompilerResult result_vs;
 	LLGI::CompilerResult result_ps;
 
@@ -196,7 +199,7 @@ void EffectPlatformMetal::CreateShaders()
 
 EffekseerRenderer::RendererRef EffectPlatformMetal::CreateRenderer()
 {
-	auto renderer = EffekseerRendererMetal::Create(10000, MTLPixelFormatRGBA8Unorm,  MTLPixelFormatDepth32Float, false);
+	auto renderer = EffekseerRendererMetal::Create(10000, MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, false);
 
 	renderer->SetDistortingCallback(new DistortingCallbackMetal(this));
 
@@ -208,27 +211,102 @@ EffekseerRenderer::RendererRef EffectPlatformMetal::CreateRenderer()
 	return renderer;
 }
 
-EffectPlatformMetal::~EffectPlatformMetal() {}
+Effekseer::Backend::TextureRef EffectPlatformMetal::CreateEffekseerTexture(LLGI::Texture* texture)
+{
+	auto metalTexture = static_cast<LLGI::TextureMetal*>(texture);
+	if (metalTexture == nullptr)
+	{
+		return nullptr;
+	}
 
-void EffectPlatformMetal::InitializeDevice(const EffectPlatformInitializingParameter& param) { CreateCheckedTexture(); }
+	return EffekseerRendererMetal::CreateTexture(GetRenderer()->GetGraphicsDevice(), metalTexture->GetTexture());
+}
 
-void EffectPlatformMetal::DestroyDevice() { EffectPlatformLLGI::DestroyDevice(); }
+EffectPlatformMetal::~EffectPlatformMetal()
+{
+}
+
+void EffectPlatformMetal::InitializeDevice(const EffectPlatformInitializingParameter& param)
+{
+	CreateCheckedTexture();
+}
+
+void EffectPlatformMetal::DestroyDevice()
+{
+	ES_SAFE_RELEASE(backgroundTexture_);
+
+	EffectPlatformLLGI::DestroyDevice();
+}
+
+void EffectPlatformMetal::BeginCompute()
+{
+	EffectPlatformLLGI::BeginCompute();
+
+	auto cl = static_cast<LLGI::CommandListMetal*>(commandList_.get());
+	commandList_->BeginComputePass();
+	EffekseerRendererMetal::BeginCommandList(commandListEfk_);
+	GetRenderer()->SetCommandList(commandListEfk_);
+	EffekseerRendererMetal::BeginComputePass(commandListEfk_, cl->GetComputeCommandEncorder());
+}
+
+void EffectPlatformMetal::EndCompute()
+{
+	EffekseerRendererMetal::EndComputePass(commandListEfk_);
+	GetRenderer()->SetCommandList(nullptr);
+	EffekseerRendererMetal::EndCommandList(commandListEfk_);
+	commandList_->EndComputePass();
+
+	EffectPlatformLLGI::EndCompute();
+}
 
 void EffectPlatformMetal::BeginRendering()
 {
 	EffectPlatformLLGI::BeginRendering();
 
 	auto cl = static_cast<LLGI::CommandListMetal*>(commandList_.get());
-	EffekseerRendererMetal::BeginCommandList(commandListEfk_, cl->GetRenderCommandEncorder());
+	EffekseerRendererMetal::BeginCommandList(commandListEfk_);
 	GetRenderer()->SetCommandList(commandListEfk_);
+
+	EffekseerRendererMetal::BeginRenderPass(commandListEfk_, cl->GetRenderCommandEncorder());
 }
 
 void EffectPlatformMetal::EndRendering()
 {
+	EffekseerRendererMetal::EndRenderPass(commandListEfk_);
+
 	GetRenderer()->SetCommandList(nullptr);
 	EffekseerRendererMetal::EndCommandList(commandListEfk_);
-
 	EffectPlatformLLGI::EndRendering();
 }
 
-LLGI::Texture* EffectPlatformMetal::GetCheckedTexture() const { return checkTexture_; }
+LLGI::Texture* EffectPlatformMetal::GetBackgroundTexture()
+{
+	if (backgroundTexture_ == nullptr)
+	{
+		LLGI::TextureParameter param;
+		param.Size = LLGI::Vec3I(initParam_.WindowSize[0], initParam_.WindowSize[1], 1);
+		backgroundTexture_ = graphics_->CreateTexture(param);
+	}
+
+	return backgroundTexture_;
+}
+
+void EffectPlatformMetal::UpdateBackgroundTextureForDistortion()
+{
+	auto background = GetBackgroundTexture();
+	auto cl = static_cast<LLGI::CommandListMetal*>(commandList_.get());
+
+	EffekseerRendererMetal::EndRenderPass(commandListEfk_);
+	commandList_->EndRenderPass();
+	commandList_->CopyTexture(colorBuffer_, background);
+
+	renderPass_->SetIsColorCleared(false);
+	renderPass_->SetIsDepthCleared(false);
+	commandList_->BeginRenderPass(renderPass_);
+	EffekseerRendererMetal::BeginRenderPass(commandListEfk_, cl->GetRenderCommandEncorder());
+}
+
+LLGI::Texture* EffectPlatformMetal::GetCheckedTexture() const
+{
+	return checkTexture_;
+}

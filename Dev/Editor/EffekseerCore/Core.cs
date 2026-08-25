@@ -11,7 +11,7 @@ namespace Effekseer
 {
 	public class Core
 	{
-		public const string Version = "1.80β1";
+		public const string Version = "1.80.7";
 
 		public const string OptionFilePath = "config.option.xml";
 
@@ -302,6 +302,11 @@ namespace Effekseer
 		/// 読込後イベント
 		/// </summary>
 		public static event EventHandler OnReload;
+
+		/// <summary>
+		/// Rename Request Event
+		/// </summary>
+		public static event EventHandler OnRenameNodeRequest;
 
 		static Core()
 		{
@@ -976,6 +981,12 @@ namespace Effekseer
 				updater.Update(root_node);
 			}
 
+			if (toolVersion < ParseVersion("1.80β2"))
+			{
+				var updater = new Utils.ProjectVersionUpdator17To18Beta2();
+				updater.Update(root_node);
+			}
+
 			Command.CommandManager.Clear();
 			IsChanged = false;
 
@@ -1518,6 +1529,15 @@ namespace Effekseer
 						list.Add(Tuple35.Create(name, (object)node.AdvancedRendererCommonValuesValues.AlphaCutoffParam.FCurve));
 					}
 
+					if (node.GpuParticles.Enabled.Value)
+					{
+						if (node.GpuParticles.RenderColor.ColorAll.Type.Value == StandardColorType.FCurve)
+						{
+							var name = MultiLanguageTextProvider.GetText("Fcurve_Elm_GpuParticles_ColorAll");
+							list.Add(Tuple35.Create(name, (object)node.GpuParticles.RenderColor.ColorAll.FCurve.FCurve));
+						}
+					}
+
 					return list.ToArray();
 				};
 
@@ -1596,8 +1616,13 @@ namespace Effekseer
 		/// </summary>
 		public static string GetToolHelpURL()
 		{
-			const string baseURL = "https://effekseer.github.io/Helps/17x/Tool/";
-			string language = (LanguageTable.Languages[LanguageTable.SelectedIndex] == "ja") ? "ja" : "en";
+			const string baseURL = "https://effekseer.github.io/Helps/18x/Tool/";
+			string language = LanguageTable.Languages[LanguageTable.SelectedIndex] switch
+			{
+				"ja" => "ja",
+				"zhcn" => "zh_CN",
+				_ => "en"
+			};
 			return baseURL + language + "/";
 		}
 
@@ -1607,6 +1632,15 @@ namespace Effekseer
 		public static string GetToolReferenceURL(string docPage)
 		{
 			return GetToolHelpURL() + "ToolReference/" + docPage;
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="node"></param>
+		public static void RenameNode(Data.NodeBase node)
+		{
+			OnRenameNodeRequest?.Invoke(null, null);
 		}
 	}
 }

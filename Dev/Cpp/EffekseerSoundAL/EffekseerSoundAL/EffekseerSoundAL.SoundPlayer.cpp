@@ -2,9 +2,9 @@
 //----------------------------------------------------------------------------------
 // Include
 //----------------------------------------------------------------------------------
+#include "EffekseerSoundAL.SoundPlayer.h"
 #include "EffekseerSoundAL.SoundImplemented.h"
 #include "EffekseerSoundAL.SoundVoice.h"
-#include "EffekseerSoundAL.SoundPlayer.h"
 
 //-----------------------------------------------------------------------------------
 //
@@ -14,8 +14,8 @@ namespace EffekseerSound
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-SoundPlayer::SoundPlayer( const SoundImplementedRef& sound )
-	: m_sound	( sound )
+SoundPlayer::SoundPlayer(const SoundImplementedRef& sound)
+	: sound_(sound)
 {
 }
 
@@ -29,16 +29,19 @@ SoundPlayer::~SoundPlayer()
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-::Effekseer::SoundHandle SoundPlayer::Play( ::Effekseer::SoundTag tag, 
-		const ::Effekseer::SoundPlayer::InstanceParameter& parameter )
+::Effekseer::SoundHandle SoundPlayer::Play(::Effekseer::SoundTag tag,
+										   const ::Effekseer::SoundPlayer::InstanceParameter& parameter)
 {
-	if (m_sound->GetMute()) {
+	if (sound_->GetMute())
+	{
 		return NULL;
 	}
 
-	if (parameter.Data != nullptr) {
-		SoundVoice* voice = m_sound->GetVoice();
-		if (voice) {
+	if (parameter.Data != nullptr)
+	{
+		SoundVoice* voice = sound_->GetVoice();
+		if (voice)
+		{
 			voice->Play(tag, parameter);
 			return (::Effekseer::SoundHandle)voice;
 		}
@@ -49,10 +52,11 @@ SoundPlayer::~SoundPlayer()
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundPlayer::Stop( ::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag )
+void SoundPlayer::Stop(::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag)
 {
 	SoundVoice* voice = (SoundVoice*)handle;
-	if (tag == voice->GetTag()) {
+	if (tag == voice->GetTag())
+	{
 		voice->Stop();
 	}
 }
@@ -60,10 +64,11 @@ void SoundPlayer::Stop( ::Effekseer::SoundHandle handle, ::Effekseer::SoundTag t
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundPlayer::Pause( ::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag, bool pause  )
+void SoundPlayer::Pause(::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag, bool pause)
 {
 	SoundVoice* voice = (SoundVoice*)handle;
-	if (tag == voice->GetTag()) {
+	if (tag == voice->GetTag())
+	{
 		voice->Pause(pause);
 	}
 }
@@ -71,10 +76,11 @@ void SoundPlayer::Pause( ::Effekseer::SoundHandle handle, ::Effekseer::SoundTag 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-bool SoundPlayer::CheckPlaying( ::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag )
+bool SoundPlayer::CheckPlaying(::Effekseer::SoundHandle handle, ::Effekseer::SoundTag tag)
 {
 	SoundVoice* voice = (SoundVoice*)handle;
-	if (tag == voice->GetTag()) {
+	if (tag == voice->GetTag())
+	{
 		return voice->CheckPlaying();
 	}
 	return false;
@@ -83,25 +89,25 @@ bool SoundPlayer::CheckPlaying( ::Effekseer::SoundHandle handle, ::Effekseer::So
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundPlayer::StopTag( ::Effekseer::SoundTag tag )
+void SoundPlayer::StopTag(::Effekseer::SoundTag tag)
 {
-	m_sound->StopTag(tag);
+	sound_->StopTag(tag);
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundPlayer::PauseTag( ::Effekseer::SoundTag tag, bool pause )
+void SoundPlayer::PauseTag(::Effekseer::SoundTag tag, bool pause)
 {
-	m_sound->PauseTag(tag, pause);
+	sound_->PauseTag(tag, pause);
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-bool SoundPlayer::CheckPlayingTag( ::Effekseer::SoundTag tag )
+bool SoundPlayer::CheckPlayingTag(::Effekseer::SoundTag tag)
 {
-	return m_sound->CheckPlayingTag(tag);
+	return sound_->CheckPlayingTag(tag);
 }
 
 //----------------------------------------------------------------------------------
@@ -109,13 +115,13 @@ bool SoundPlayer::CheckPlayingTag( ::Effekseer::SoundTag tag )
 //----------------------------------------------------------------------------------
 void SoundPlayer::StopAll()
 {
-	m_sound->StopAllVoices();
+	sound_->StopAllVoices();
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-}
+} // namespace EffekseerSound
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------

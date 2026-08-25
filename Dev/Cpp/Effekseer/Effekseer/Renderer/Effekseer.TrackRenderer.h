@@ -9,6 +9,7 @@
 #include "../Effekseer.Color.h"
 #include "../Effekseer.Matrix43.h"
 #include "../Effekseer.RectF.h"
+#include "../Effekseer.RenderingTransform.h"
 #include "../Effekseer.Vector2D.h"
 #include "../Effekseer.Vector3D.h"
 #include "../SIMD/Mat43f.h"
@@ -51,6 +52,8 @@ public:
 		TrailSmoothingType SmoothingType = TrailSmoothingType::Off;
 
 		RefPtr<RenderingUserData> UserData;
+		EffectRenderingTransformParameter RenderingCoordinateTransform;
+		EffectRenderingTransformParameter RenderingTransform;
 	};
 
 	struct InstanceGroupParameter
@@ -92,6 +95,8 @@ public:
 		float AlphaThreshold;
 
 		float ViewOffsetDistance;
+
+		float ParticleTimes[2];
 
 		std::array<float, 4> CustomData1;
 		std::array<float, 4> CustomData2;

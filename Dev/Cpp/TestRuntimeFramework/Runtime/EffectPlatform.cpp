@@ -1,48 +1,109 @@
 
 #include "EffectPlatform.h"
 #include <assert.h>
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
 
-void EffectPlatform::CreateCheckeredPattern(int width, int height, uint32_t* pixels)
+namespace
 {
-	{
-		const uint32_t color[2] = {0xFF204020, 0xFF80A080};
 
-		for (int y = 0; y < height / 2; y++)
+int64_t GetTimeMicroseconds()
+{
+	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+template <class T>
+void FlipRows(std::vector<T>& pixels, int32_t width, int32_t height)
+{
+	for (int32_t y = 0; y < height / 2; y++)
+	{
+		for (int32_t x = 0; x < width; x++)
+		{
+			std::swap(pixels[x + y * width], pixels[x + (height - 1 - y) * width]);
+		}
+	}
+}
+
+} // namespace
+
+void EffectPlatform::CreateBackgroundPattern(int width, int height, uint32_t* pixels)
+{
+	if (initParam_.BackgroundPattern == BackgroundPatternType::NonPeriodicGradient)
+	{
+		for (int y = 0; y < height; y++)
 		{
 			for (int x = 0; x < width; x++)
 			{
-				*pixels++ = color[(x / 20 % 2) ^ (y / 20 % 2)];
+				const auto r = static_cast<uint32_t>(24 + (x * 83) / width + (y * 29) / height);
+				const auto g = static_cast<uint32_t>(40 + (x * 37) / width + (y * 71) / height);
+				const auto b = static_cast<uint32_t>(32 + (x * 19) / width + (y * 47) / height);
+				*pixels++ = 0xFF000000 | (b << 16) | (g << 8) | r;
 			}
 		}
 	}
-
+	else
 	{
-		const uint32_t color[2] = {0xFF402020, 0xFFA08080};
-
-		for (int y = height / 2; y < height; y++)
 		{
-			for (int x = 0; x < width; x++)
+			const uint32_t color[2] = {0xFF204020, 0xFF80A080};
+
+			for (int y = 0; y < height / 2; y++)
 			{
-				*pixels++ = color[(x / 20 % 2) ^ (y / 20 % 2)];
+				for (int x = 0; x < width; x++)
+				{
+					*pixels++ = color[(x / 20 % 2) ^ (y / 20 % 2)];
+				}
+			}
+		}
+
+		{
+			const uint32_t color[2] = {0xFF402020, 0xFFA08080};
+
+			for (int y = height / 2; y < height; y++)
+			{
+				for (int x = 0; x < width; x++)
+				{
+					*pixels++ = color[(x / 20 % 2) ^ (y / 20 % 2)];
+				}
 			}
 		}
 	}
 
 	if (isBackgroundFlipped_)
 	{
-		for (size_t y = 0; y < initParam_.WindowSize[1] / 2; y++)
-		{
-			for (size_t x = 0; x < initParam_.WindowSize[0]; x++)
-			{
-				std::swap(checkeredPattern_[x + y * initParam_.WindowSize[0]], checkeredPattern_[x + (initParam_.WindowSize[1] - 1 - y) * initParam_.WindowSize[0]]);
-			}
-		}
+		FlipRows(checkeredPattern_, initParam_.WindowSize[0], initParam_.WindowSize[1]);
 	}
 }
 
 EffekseerRenderer::RendererRef EffectPlatform::GetRenderer() const
 {
 	return renderer_;
+}
+
+std::array<EffectPlatform::GroundPlaneVertex, 4> EffectPlatform::CreateGroundPlaneVertices() const
+{
+	return Effekseer::ToolRuntime::CreateGroundPlaneClipVertices(
+		renderer_->GetCameraMatrix(),
+		renderer_->GetProjectionMatrix(),
+		Effekseer::ToolRuntime::CreateDefaultSoftParticleGround());
+}
+
+std::array<uint16_t, 6> EffectPlatform::CreateGroundPlaneIndices() const
+{
+	return Effekseer::ToolRuntime::CreateGroundPlaneIndices16();
+}
+
+std::array<std::array<float, 4>, 4> EffectPlatform::CreateGroundViewProjectionColumns() const
+{
+	return Effekseer::ToolRuntime::CreateViewProjectionColumns(renderer_->GetCameraMatrix(), renderer_->GetProjectionMatrix());
+}
+
+EffekseerRenderer::DepthReconstructionParameter EffectPlatform::CreateGroundDepthReconstructionParameter(float depthBufferScale, float depthBufferOffset) const
+{
+	return Effekseer::ToolRuntime::CreateDepthReconstructionParameter(renderer_->GetProjectionMatrix(), depthBufferScale, depthBufferOffset);
 }
 
 EffectPlatform::EffectPlatform()
@@ -66,7 +127,7 @@ void EffectPlatform::Initialize(const EffectPlatformInitializingParameter& param
 	initParam_ = param;
 
 	checkeredPattern_.resize(initParam_.WindowSize[0] * initParam_.WindowSize[1]);
-	CreateCheckeredPattern(initParam_.WindowSize[0], initParam_.WindowSize[1], checkeredPattern_.data());
+	CreateBackgroundPattern(initParam_.WindowSize[0], initParam_.WindowSize[1], checkeredPattern_.data());
 
 	InitializeWindow();
 
@@ -124,6 +185,8 @@ void EffectPlatform::Initialize(const EffectPlatformInitializingParameter& param
 		manager_->SetRingRenderer(renderer_->CreateRingRenderer());
 		manager_->SetModelRenderer(renderer_->CreateModelRenderer());
 		manager_->SetTrackRenderer(renderer_->CreateTrackRenderer());
+		manager_->SetGpuParticleSystem(renderer_->CreateGpuParticleSystem());
+		manager_->SetGpuParticleFactory(renderer_->CreateGpuParticleFactory());
 
 		manager_->SetTextureLoader(renderer_->CreateTextureLoader());
 		manager_->SetModelLoader(renderer_->CreateModelLoader());
@@ -132,10 +195,58 @@ void EffectPlatform::Initialize(const EffectPlatformInitializingParameter& param
 
 	manager_->SetCoordinateSystem(param.CoordinateSyatem);
 
+#if !defined(__EMSCRIPTEN__) || defined(EFFEKSEER_WEBGPU_BROWSER_ENABLE_WORKER_THREADS)
 	// support multithread in 1.6
 	manager_->LaunchWorkerThreads(4);
+#endif
 
 	isInitialized_ = true;
+}
+
+void EffectPlatform::ResetBackgroundPattern()
+{
+	isGroundDepthEnabled_ = false;
+	checkeredPattern_.resize(initParam_.WindowSize[0] * initParam_.WindowSize[1]);
+	CreateBackgroundPattern(initParam_.WindowSize[0], initParam_.WindowSize[1], checkeredPattern_.data());
+	UpdateBackgroundTexture();
+}
+
+void EffectPlatform::GenerateGroundDepth()
+{
+	isGroundDepthEnabled_ = true;
+	if (renderer_ == nullptr)
+	{
+		return;
+	}
+
+	const auto width = initParam_.WindowSize[0];
+	const auto height = initParam_.WindowSize[1];
+	const auto groundDepth = Effekseer::ToolRuntime::CreateGroundDepthRenderData(
+		width,
+		height,
+		renderer_->GetCameraMatrix(),
+		renderer_->GetProjectionMatrix(),
+		renderer_->GetCameraPosition(),
+		Effekseer::ToolRuntime::CreateDefaultSoftParticleGround(),
+		isOpenGLMode_,
+		isBackgroundFlipped_);
+	checkeredPattern_ = groundDepth.BackgroundPixels;
+
+	Effekseer::Backend::TextureParameter texParam;
+	Effekseer::CustomVector<uint8_t> initialData;
+	initialData.resize(groundDepth.DepthTextureInitialData.size());
+	texParam.Format = Effekseer::Backend::TextureFormatType::R32G32B32A32_FLOAT;
+	texParam.Size = {width, height, 1};
+	if (!groundDepth.DepthTextureInitialData.empty())
+	{
+		memcpy(initialData.data(), groundDepth.DepthTextureInitialData.data(), groundDepth.DepthTextureInitialData.size());
+	}
+
+	auto depth = GetRenderer()->GetGraphicsDevice()->CreateTexture(texParam, initialData);
+
+	GetRenderer()->SetDepth(depth, CreateGroundDepthReconstructionParameter());
+
+	UpdateBackgroundTexture();
 }
 
 void EffectPlatform::Terminate()
@@ -169,23 +280,72 @@ Effekseer::Handle EffectPlatform::Play(const char16_t* path, Effekseer::Vector3D
 
 	if (filePtr == nullptr)
 	{
-		printf("Failed to load %s./n", path8);
-		assert(0);
+		throw std::runtime_error(std::string("Failed to open effect file: ") + path8);
 	}
 
-	fseek(filePtr, 0, SEEK_END);
-	auto size = ftell(filePtr);
-	fseek(filePtr, 0, SEEK_SET);
+	if (fseek(filePtr, 0, SEEK_END) != 0)
+	{
+		fclose(filePtr);
+		throw std::runtime_error(std::string("Failed to seek effect file: ") + path8);
+	}
+
+	const auto fileSize = ftell(filePtr);
+	if (fileSize <= 0 || fileSize > std::numeric_limits<int32_t>::max())
+	{
+		fclose(filePtr);
+		throw std::runtime_error(
+			std::string("Invalid effect file size: path=") + path8 + ", bytes=" + std::to_string(fileSize));
+	}
+
+	if (fseek(filePtr, 0, SEEK_SET) != 0)
+	{
+		fclose(filePtr);
+		throw std::runtime_error(std::string("Failed to rewind effect file: ") + path8);
+	}
 
 	std::vector<uint8_t> data;
-	data.resize(size);
-	fread(data.data(), 1, size, filePtr);
+	data.resize(static_cast<size_t>(fileSize));
+	const auto readSize = fread(data.data(), 1, data.size(), filePtr);
 	fclose(filePtr);
+	if (readSize != data.size())
+	{
+		throw std::runtime_error(
+			std::string("Failed to read effect file completely: path=") + path8 +
+			", expected=" + std::to_string(data.size()) + ", actual=" + std::to_string(readSize));
+	}
 
 	auto effect = Effekseer::Effect::Create(manager_, path);
 	if (effect == nullptr)
 	{
-		assert(0);
+		const auto setting = manager_->GetSetting();
+		const auto factoryCount = setting != nullptr ? setting->GetEffectFactoryCount() : 0;
+		int32_t supportingFactoryCount = 0;
+		for (int32_t i = 0; i < factoryCount; i++)
+		{
+			const auto factory = setting->GetEffectFactory(i);
+			if (factory != nullptr && factory->OnCheckIsBinarySupported(data.data(), static_cast<int32_t>(data.size())))
+			{
+				supportingFactoryCount++;
+			}
+		}
+
+		char header[3 * 8 + 1] = {};
+		const auto headerSize = std::min<size_t>(data.size(), 8);
+		for (size_t i = 0; i < headerSize; i++)
+		{
+			snprintf(
+				header + i * 3,
+				sizeof(header) - i * 3,
+				i + 1 < headerSize ? "%02X " : "%02X",
+				static_cast<unsigned int>(data[i]));
+		}
+
+		throw std::runtime_error(
+			std::string("Effect::Create failed: path=") + path8 +
+			", bytes=" + std::to_string(data.size()) +
+			", header=" + header +
+			", factories=" + std::to_string(factoryCount) +
+			", supportingFactories=" + std::to_string(supportingFactoryCount));
 	}
 
 	buffers_.push_back(data);
@@ -195,14 +355,18 @@ Effekseer::Handle EffectPlatform::Play(const char16_t* path, Effekseer::Vector3D
 	return handle;
 }
 
-bool EffectPlatform::Update()
+bool EffectPlatform::Update(EffectPlatformMeasuredTime* measuredTime)
 {
+	const auto totalBeginTime = GetTimeMicroseconds();
+
 	if (!DoEvent())
 		return false;
 
 	Effekseer::Manager::LayerParameter layerParameter;
 	layerParameter.ViewerPosition = renderer_ != nullptr ? renderer_->GetCameraPosition() : Effekseer::Vector3D(0.0, 0.0, 0.0);
 	manager_->SetLayerParameter(0, layerParameter);
+
+	const auto updateBeginTime = GetTimeMicroseconds();
 
 	if (this->initParam_.IsUpdatedByHandle)
 	{
@@ -222,26 +386,93 @@ bool EffectPlatform::Update()
 		manager_->Update(updateParameter);
 	}
 
+	if (measuredTime != nullptr)
+	{
+		measuredTime->ManagerUpdate = static_cast<int32_t>(GetTimeMicroseconds() - updateBeginTime);
+	}
+
+	const auto computeBeginTime = GetTimeMicroseconds();
+
+	BeginCompute();
+	manager_->Compute();
+	EndCompute();
+
+	if (measuredTime != nullptr)
+	{
+		measuredTime->Compute = static_cast<int32_t>(GetTimeMicroseconds() - computeBeginTime);
+	}
+
+	const auto platformBeginRenderingBeginTime = GetTimeMicroseconds();
 	BeginRendering();
+
+	if (measuredTime != nullptr)
+	{
+		measuredTime->PlatformBeginRendering = static_cast<int32_t>(GetTimeMicroseconds() - platformBeginRenderingBeginTime);
+	}
 
 	if (renderer_ != nullptr)
 	{
 		Effekseer::Manager::DrawParameter param;
 		param.ViewProjectionMatrix = renderer_->GetCameraProjectionMatrix();
+		param.RenderingCoordinateMatrix = renderingCoordinateMatrix_;
 		param.ZNear = 0.0f;
 		param.ZFar = 1.0f;
 
 		renderer_->SetTime(time_);
+		const auto rendererBeginTime = GetTimeMicroseconds();
 		renderer_->BeginRendering();
+
+		if (measuredTime != nullptr)
+		{
+			measuredTime->RendererBegin = static_cast<int32_t>(GetTimeMicroseconds() - rendererBeginTime);
+		}
+
+		const auto drawBeginTime = GetTimeMicroseconds();
 		manager_->Draw(param);
+
+		if (measuredTime != nullptr)
+		{
+			measuredTime->ManagerDraw = static_cast<int32_t>(GetTimeMicroseconds() - drawBeginTime);
+			const auto drawTimeBreakdown = manager_->GetDrawTimeBreakdown();
+			measuredTime->ManagerDrawWorkerThreadWait = drawTimeBreakdown.WorkerThreadWait;
+			measuredTime->ManagerDrawMutexLock = drawTimeBreakdown.MutexLock;
+			measuredTime->ManagerDrawCulling = drawTimeBreakdown.Culling;
+			measuredTime->ManagerDrawSorting = drawTimeBreakdown.Sorting;
+			measuredTime->ManagerDrawDrawSets = drawTimeBreakdown.DrawSets;
+			measuredTime->ManagerDrawGpuParticles = drawTimeBreakdown.GpuParticles;
+			measuredTime->ManagerDrawTotal = drawTimeBreakdown.Total;
+		}
+
+		const auto rendererEndTime = GetTimeMicroseconds();
 		renderer_->EndRendering();
+
+		if (measuredTime != nullptr)
+		{
+			measuredTime->RendererEnd = static_cast<int32_t>(GetTimeMicroseconds() - rendererEndTime);
+		}
 	}
 
+	const auto platformEndRenderingBeginTime = GetTimeMicroseconds();
 	EndRendering();
 
+	if (measuredTime != nullptr)
+	{
+		const auto beforePresentTime = GetTimeMicroseconds();
+		measuredTime->PlatformEndRendering = static_cast<int32_t>(beforePresentTime - platformEndRenderingBeginTime);
+		measuredTime->FrameWithoutPresent = static_cast<int32_t>(beforePresentTime - totalBeginTime);
+	}
+
+	const auto presentBeginTime = GetTimeMicroseconds();
 	Present();
 
 	time_ += 1.0f / 60.0f;
+
+	if (measuredTime != nullptr)
+	{
+		const auto totalEndTime = GetTimeMicroseconds();
+		measuredTime->Present = static_cast<int32_t>(totalEndTime - presentBeginTime);
+		measuredTime->Frame = static_cast<int32_t>(totalEndTime - totalBeginTime);
+	}
 
 	return true;
 }
@@ -257,6 +488,7 @@ bool EffectPlatform::Draw()
 	{
 		Effekseer::Manager::DrawParameter param;
 		param.ViewProjectionMatrix = renderer_->GetCameraProjectionMatrix();
+		param.RenderingCoordinateMatrix = renderingCoordinateMatrix_;
 		param.ZNear = 0.0f;
 		param.ZFar = 1.0f;
 
@@ -273,10 +505,22 @@ bool EffectPlatform::Draw()
 	return true;
 }
 
+bool EffectPlatform::BeginFrame()
+{
+	return DoEvent();
+}
+
 void EffectPlatform::StopAllEffects()
 {
 	if (manager_ != nullptr)
 	{
 		manager_->StopAllEffects();
 	}
+}
+
+void EffectPlatform::ClearLoadedEffects()
+{
+	effectHandles_.clear();
+	effects_.clear();
+	buffers_.clear();
 }

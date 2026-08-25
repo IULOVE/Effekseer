@@ -324,6 +324,12 @@ public:
 		return selfID;
 	}
 
+	int32_t SmoothStep(int32_t edge1, int32_t edge2, int32_t value, const std::string& name = "")
+	{
+		auto selfID = AddVariable(ValueType::Float1, name);
+		ExportVariable(selfID, "smoothstep(" + GetNameWithCast(edge1, ValueType::Float1) + "," + GetNameWithCast(edge2, ValueType::Float1) + "," + GetNameWithCast(value, ValueType::Float1) + ")");
+		return selfID;
+	}
 	int32_t AppendVector(int32_t id1, int32_t id2, const std::string& name = "")
 	{
 		auto allCount = GetElementCount(GetType(id1)) + GetElementCount(GetType(id2));
@@ -499,6 +505,8 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 	bool hasNoise = false;
 	bool hasLight = false;
 	bool hasLocalTime = false;
+	bool hasParticleTime = false;
+	bool hasHsv = false;
 
 	for (const auto& node : nodes)
 	{
@@ -508,7 +516,9 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 		{
 			hasGradient = true;
 		}
-		else if (node->Parameter->Type == NodeType::SimpleNoise)
+		else if (node->Parameter->Type == NodeType::WhiteNoise ||
+				 node->Parameter->Type == NodeType::SimpleNoise ||
+				 node->Parameter->Type == NodeType::CellularNoise)
 		{
 			hasNoise = true;
 		}
@@ -519,6 +529,15 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 		else if (node->Parameter->Type == NodeType::LocalTime)
 		{
 			hasLocalTime = true;
+		}
+		else if (node->Parameter->Type == NodeType::ParticleTime)
+		{
+			hasParticleTime = true;
+		}
+		else if (node->Parameter->Type == NodeType::RgbToHsv ||
+				 node->Parameter->Type == NodeType::HsvToRgb)
+		{
+			hasHsv = true;
 		}
 	}
 
@@ -540,6 +559,16 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 	if (hasLocalTime)
 	{
 		requiredPredefinedMethodTypes.emplace_back(RequiredPredefinedMethodType::LocalTime);
+	}
+
+	if (hasHsv)
+	{
+		requiredPredefinedMethodTypes.emplace_back(RequiredPredefinedMethodType::Hsv);
+	}
+
+	if (hasParticleTime)
+	{
+		requiredPredefinedMethodTypes.emplace_back(RequiredPredefinedMethodType::ParticleTime);
 	}
 
 	// Generate exporter node
@@ -869,7 +898,7 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 		{
 			extracted.second->UniformName = "efk_texture_" + std::to_string(extracted.first);
 
-			if (!IsValidName(extracted.second->Name.c_str()) || usedName.count(extracted.second->Name) > 0)
+			if (!IsValidName(extracted.second->Name) || usedName.count(extracted.second->Name) > 0)
 			{
 				if (extracted.second->IsInternal)
 				{
@@ -895,7 +924,7 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 		{
 			extracted.second->UniformName = "efk_uniform_" + std::to_string(extracted.first);
 
-			if (!IsValidName(extracted.second->Name.c_str()) || usedName.count(extracted.second->Name) > 0)
+			if (!IsValidName(extracted.second->Name) || usedName.count(extracted.second->Name) > 0)
 			{
 				extracted.second->Name = extracted.second->UniformName;
 			}
@@ -914,7 +943,7 @@ TextExporterResult TextExporter::Export(std::shared_ptr<Material> material, std:
 		{
 			extracted.second->UniformName = "efk_gradient_" + std::to_string(extracted.first);
 
-			if (!IsValidName(extracted.second->Name.c_str()) || usedName.count(extracted.second->Name) > 0)
+			if (!IsValidName(extracted.second->Name) || usedName.count(extracted.second->Name) > 0)
 			{
 				extracted.second->Name = extracted.second->UniformName;
 			}
@@ -1256,7 +1285,7 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 		{
 			return GetInputArg(type_, pin_);
 		}
-		return GetInputArg(pin_.Type, prop_->Floats[0]);
+		return GetInputArg(type_, prop_->Floats[0]);
 	};
 
 	std::ostringstream ret;
@@ -1343,6 +1372,43 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 			<< std::endl;
 	}
 
+	if (node->Target->Parameter->Type == NodeType::Branch)
+	{
+		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "=" << node->Inputs[0].Name << "?"
+			<< exportInputOrProp(node->Outputs[0].Type, node->Inputs[1], node->Target->Properties[0]) << ":"
+			<< exportInputOrProp(node->Outputs[0].Type, node->Inputs[2], node->Target->Properties[1]) << ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::Compare)
+	{
+		const char* op[6] = {"<", "<=", ">", ">=", "==", "!="};
+		int condition = static_cast<int>(node->Target->Properties[2]->Floats[0]);
+		condition = std::clamp(condition, 0, 5);
+		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "="
+			<< exportInputOrProp(node->Inputs[0].Type, node->Inputs[0], node->Target->Properties[0]) << op[condition]
+			<< exportInputOrProp(node->Inputs[1].Type, node->Inputs[1], node->Target->Properties[1]) << ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::BoolAnd)
+	{
+		ret << "bool " << node->Outputs[0].Name << "=" << node->Inputs[0].Name << "&&" << node->Inputs[1].Name << ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::BoolOr)
+	{
+		ret << "bool " << node->Outputs[0].Name << "=" << node->Inputs[0].Name << "||" << node->Inputs[1].Name << ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::BoolNot)
+	{
+		ret << "bool " << node->Outputs[0].Name << "=" << "!" << node->Inputs[0].Name << ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::IsFrontFace)
+	{
+		ret << "bool " << node->Outputs[0].Name << "=" << "isFrontFace" << ";" << std::endl;
+	}
+
 	if (node->Target->Parameter->Type == NodeType::Sine)
 	{
 		exportIn1Out1("sin");
@@ -1385,31 +1451,17 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 
 	if (node->Target->Parameter->Type == NodeType::Step)
 	{
-		int edgeArg = 0;
-		int valueArg = 0;
+		ret << GetTypeName(ValueType::Float1) << " " << node->Outputs[0].Name << "= step("
+			<< exportInputOrProp(ValueType::Float1, node->Inputs[0], node->Target->Properties[0]) << ","
+			<< exportInputOrProp(ValueType::Float1, node->Inputs[1], node->Target->Properties[1]) << ");" << std::endl;
+	}
 
-		if (node->Inputs[0].IsConnected)
-		{
-			edgeArg = compiler->AddVariable(node->Inputs[0].Type, node->Inputs[0].Name);
-		}
-		else
-		{
-			edgeArg = compiler->AddConstant(ValueType::Float1, node->Inputs[0].NumberValue);
-		}
-
-		if (node->Inputs[1].IsConnected)
-		{
-			valueArg = compiler->AddVariable(node->Inputs[1].Type, node->Inputs[1].Name);
-		}
-		else
-		{
-			valueArg = compiler->AddConstant(ValueType::Float1, node->Inputs[1].NumberValue);
-		}
-
-		compiler->Step(edgeArg, valueArg, node->Outputs[0].Name);
-
-		ret << compiler->Str();
-		compiler->Clear();
+	if (node->Target->Parameter->Type == NodeType::SmoothStep)
+	{
+		ret << GetTypeName(ValueType::Float1) << " " << node->Outputs[0].Name << "= smoothstep("
+			<< exportInputOrProp(ValueType::Float1, node->Inputs[0], node->Target->Properties[0]) << ","
+			<< exportInputOrProp(ValueType::Float1, node->Inputs[1], node->Target->Properties[1]) << ","
+			<< exportInputOrProp(ValueType::Float1, node->Inputs[2], node->Target->Properties[2]) << ");" << std::endl;
 	}
 
 	if (node->Target->Parameter->Type == NodeType::Ceil)
@@ -1673,6 +1725,18 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 		}
 	}
 
+	if (node->Target->Parameter->Type == NodeType::RgbToHsv)
+	{
+		ret << GetTypeName(ValueType::Float3) << " " << node->Outputs[0].Name << "= RGBToHSV("
+			<< GetInputArg(ValueType::Float3, node->Inputs[0]) << ");" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::HsvToRgb)
+	{
+		ret << GetTypeName(ValueType::Float3) << " " << node->Outputs[0].Name << "= HSVToRGB("
+			<< GetInputArg(ValueType::Float3, node->Inputs[0]) << ");" << std::endl;
+	}
+
 	if (node->Target->Parameter->Type == NodeType::Gradient)
 	{
 		// None
@@ -1699,9 +1763,18 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 		}
 	}
 
+	if (node->Target->Parameter->Type == NodeType::WhiteNoise)
+	{
+		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "=Rand2(" << GetInputArg(node->Inputs[0].Type, node->Inputs[0]) << ");" << std::endl;
+	}
 	if (node->Target->Parameter->Type == NodeType::SimpleNoise)
 	{
 		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "=SimpleNoise(" << GetInputArg(node->Inputs[0].Type, node->Inputs[0]) << ","
+			<< GetInputArg(node->Inputs[1].Type, node->Inputs[1]) << ");" << std::endl;
+	}
+	if (node->Target->Parameter->Type == NodeType::CellularNoise)
+	{
+		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "=CellularNoise(" << GetInputArg(node->Inputs[0].Type, node->Inputs[0]) << ","
 			<< GetInputArg(node->Inputs[1].Type, node->Inputs[1]) << ");" << std::endl;
 	}
 
@@ -1738,6 +1811,23 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 		ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "="
 			<< "$LOCALTIME$"
 			<< ";" << std::endl;
+	}
+
+	if (node->Target->Parameter->Type == NodeType::ParticleTime)
+	{
+		if (node->Outputs[0].IsConnected)
+		{
+			ret << GetTypeName(node->Outputs[0].Type) << " " << node->Outputs[0].Name << "="
+				<< "$PARTICLE_TIME_NORMALIZED$"
+				<< ";" << std::endl;
+		}
+
+		if (node->Outputs[1].IsConnected)
+		{
+			ret << GetTypeName(node->Outputs[1].Type) << " " << node->Outputs[1].Name << "="
+				<< "$PARTICLE_TIME_SECONDS$"
+				<< ";" << std::endl;
+		}
 	}
 
 	if (node->Target->Parameter->Type == NodeType::CameraPositionWS)
@@ -1887,8 +1977,7 @@ std::string TextExporter::ExportNode(std::shared_ptr<TextExporterNode> node)
 
 		auto dotArg = compiler->Dot(compiler->Normalize(compiler->Subtract(compiler->CameraPosition(), compiler->WorldPosition())),
 									compiler->NormalPixelDir());
-		auto maxminusabsArg =
-			compiler->Abs(compiler->Subtract(compiler->AddConstant(1.0f), compiler->Max(compiler->AddConstant(0.0f), dotArg)));
+		auto maxminusabsArg = compiler->Subtract(compiler->AddConstant(1.0f), compiler->Abs(dotArg));
 		auto powArg = compiler->Pow(maxminusabsArg, exponentArg);
 		compiler->Add(compiler->Mul(powArg, compiler->Subtract(compiler->AddConstant(1.0f), baseReflectFractionArg)),
 					  baseReflectFractionArg,
@@ -2161,6 +2250,8 @@ std::string TextExporter::GetTypeName(ValueType type) const
 		return "$F3$";
 	if (type == ValueType::Float4)
 		return "$F4$";
+	if (type == ValueType::Bool)
+		return "bool";
 	return "";
 }
 

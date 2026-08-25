@@ -2,7 +2,10 @@
 #include "ShaderGenerator.h"
 #include "../Common/ShaderGeneratorCommon.h"
 
+#include <algorithm>
 #include <iostream>
+#include <regex>
+#include <unordered_map>
 #undef min
 #undef max
 
@@ -10,6 +13,15 @@ namespace Effekseer
 {
 namespace GLSL
 {
+namespace
+{
+
+std::string AdaptBoolExpressions(std::string code)
+{
+	return Effekseer::Shader::AdaptBoolCompareExpressions(code, {"vec2", "vec3", "vec4"});
+}
+
+} // namespace
 
 static const char* material_light_vs = R"(
 vec3 GetLightDirection() {
@@ -104,8 +116,9 @@ LAYOUT(0) IN vec4 a_Position;
 LAYOUT(1) IN vec3 a_Normal;
 LAYOUT(2) IN vec3 a_Binormal;
 LAYOUT(3) IN vec3 a_Tangent;
-LAYOUT(4) IN vec2 a_TexCoord;
-LAYOUT(5) IN vec4 a_Color;
+LAYOUT(4) IN vec2 a_TexCoord1;
+LAYOUT(5) IN vec2 a_TexCoord2;
+LAYOUT(6) IN vec4 a_Color;
 )"
 	R"(
 
@@ -116,6 +129,7 @@ LAYOUT(3) OUT mediump vec4 v_WorldN_PX;
 LAYOUT(4) OUT mediump vec4 v_WorldB_PY;
 LAYOUT(5) OUT mediump vec4 v_WorldT_PZ;
 LAYOUT(6) OUT mediump vec4 v_PosP;
+LAYOUT(7) OUT mediump vec2 v_ParticleTime;
 //$C_OUT1$
 //$C_OUT2$
 )";
@@ -130,12 +144,14 @@ uniform mat4 ProjectionMatrix;
 uniform mat4 ModelMatrix;
 uniform vec4 UVOffset;
 uniform vec4 ModelColor;
+uniform vec4 ModelParticleTime;
 
 #else
 
 uniform mat4 ModelMatrix[_INSTANCE_COUNT_];
 uniform vec4 UVOffset[_INSTANCE_COUNT_];
 uniform vec4 ModelColor[_INSTANCE_COUNT_];
+uniform vec4 ModelParticleTime[_INSTANCE_COUNT_];
 
 #endif
 
@@ -166,10 +182,12 @@ void main()
 	mat4 modelMatrix = ModelMatrix;
 	vec4 uvOffset = UVOffset;
 	vec4 modelColor = ModelColor * a_Color;
+	vec2 particleTime = ModelParticleTime.xy;
 #else
 	mat4 modelMatrix = ModelMatrix[int(gl_InstanceID)];
 	vec4 uvOffset = UVOffset[int(gl_InstanceID)];
 	vec4 modelColor = ModelColor[int(gl_InstanceID)] * a_Color;
+	vec2 particleTime = ModelParticleTime[int(gl_InstanceID)].xy;
 #endif
 
 	mat3 modelMatRot = mat3(modelMatrix);
@@ -185,17 +203,15 @@ void main()
 	objectScale.z = length(modelMatRot * vec3(0.0, 0.0, 1.0));
 
 	// UV
-	vec2 uv1 = a_TexCoord.xy * uvOffset.zw + uvOffset.xy;
-	vec2 uv2 = a_TexCoord.xy;
-
-	//uv1.y = mUVInversed.x + mUVInversed.y * uv1.y;
-	//uv1.y = mUVInversed.x + mUVInversed.y * uv1.y;
+	vec2 uv1 = a_TexCoord1 * uvOffset.zw + uvOffset.xy;
+	vec2 uv2 = a_TexCoord2 * uvOffset.zw + uvOffset.xy;
 
 	vec3 pixelNormalDir = worldNormal;
 	
 	vec4 vcolor = modelColor;
 
 	// Dummy
+	bool isFrontFace = false;
 	vec2 screenUV = vec2(0.0, 0.0);
 	float meshZ = 0.0;
 
@@ -213,6 +229,7 @@ static const char g_material_model_vs_src_suf2[] =
 	v_WorldT_PZ.xyz = worldTangent;
 	v_UV1 = uv1;
 	v_UV2 = uv2;
+	v_ParticleTime = particleTime.xy;
 	v_VColor = vcolor;
 	gl_Position = ProjectionMatrix * vec4(worldPos, 1.0);
 //	v_ScreenUV.xy = gl_Position.xy / gl_Position.w;
@@ -232,6 +249,7 @@ static const char g_material_sprite_vs_src_pre_simple[] =
 LAYOUT(0) IN vec4 atPosition;
 LAYOUT(1) IN vec4 atColor;
 LAYOUT(2) IN vec4 atTexCoord;
+LAYOUT(3) IN vec2 atParticleTime;
 )"
 
 	R"(
@@ -242,6 +260,7 @@ LAYOUT(3) OUT mediump vec4 v_WorldN_PX;
 LAYOUT(4) OUT mediump vec4 v_WorldB_PY;
 LAYOUT(5) OUT mediump vec4 v_WorldT_PZ;
 LAYOUT(6) OUT mediump vec4 v_PosP;
+LAYOUT(7) OUT mediump vec2 v_ParticleTime;
 )";
 
 static const char g_material_sprite_vs_src_pre_simple_uniform[] =
@@ -260,9 +279,10 @@ static const char g_material_sprite_vs_src_pre[] =
 LAYOUT(0) IN vec4 atPosition;
 LAYOUT(1) IN vec4 atColor;
 LAYOUT(2) IN vec3 atNormal;
-LAYOUT(3) IN vec3 atTangent;
+LAYOUT(3) IN vec4 atTangent;
 LAYOUT(4) IN vec2 atTexCoord;
 LAYOUT(5) IN vec2 atTexCoord2;
+LAYOUT(6) IN vec2 atParticleTime;
 //$C_IN1$
 //$C_IN2$
 )"
@@ -275,6 +295,7 @@ LAYOUT(3) OUT mediump vec4 v_WorldN_PX;
 LAYOUT(4) OUT mediump vec4 v_WorldB_PY;
 LAYOUT(5) OUT mediump vec4 v_WorldT_PZ;
 LAYOUT(6) OUT mediump vec4 v_PosP;
+LAYOUT(7) OUT mediump vec2 v_ParticleTime;
 //$C_OUT1$
 //$C_OUT2$
 )";
@@ -311,6 +332,7 @@ void main() {
 	vec3 objectScale = vec3(1.0, 1.0, 1.0);
 
 	// Dummy
+	bool isFrontFace = false;
 	vec2 screenUV = vec2(0.0, 0.0);
 	float meshZ = 0.0;
 
@@ -329,6 +351,8 @@ void main() {
 
 	vec3 pixelNormalDir = worldNormal;
 	vec4 vcolor = atColor;
+	v_ParticleTime = atParticleTime;
+	vec2 particleTime = atParticleTime;
 )";
 
 static const char g_material_sprite_vs_src_suf1[] =
@@ -352,6 +376,7 @@ void main() {
 	vec3 objectScale = vec3(1.0, 1.0, 1.0);
 
 	// Dummy
+	bool isFrontFace = false;
 	vec2 screenUV = vec2(0.0, 0.0);
 	float meshZ = 0.0;
 
@@ -363,14 +388,17 @@ void main() {
 
 	// NBT
 	vec3 worldNormal = (atNormal - vec3(0.5, 0.5, 0.5)) * 2.0;
-	vec3 worldTangent = (atTangent - vec3(0.5, 0.5, 0.5)) * 2.0;
-	vec3 worldBinormal = cross(worldNormal, worldTangent);
+	vec3 worldTangent = (atTangent.xyz - vec3(0.5, 0.5, 0.5)) * 2.0;
+	float tangentHandedness = atTangent.w * 2.0 - 1.0;
+	vec3 worldBinormal = cross(worldNormal, worldTangent) * tangentHandedness;
 
 	v_WorldN_PX.xyz = worldNormal;
 	v_WorldB_PY.xyz = worldBinormal;
 	v_WorldT_PZ.xyz = worldTangent;
 	vec3 pixelNormalDir = worldNormal;
 	vec4 vcolor = atColor;
+	v_ParticleTime = atParticleTime;
+	vec2 particleTime = atParticleTime;
 )";
 
 static const char g_material_sprite_vs_src_suf2[] =
@@ -412,6 +440,7 @@ LAYOUT(3) IN mediump vec4 v_WorldN_PX;
 LAYOUT(4) IN mediump vec4 v_WorldB_PY;
 LAYOUT(5) IN mediump vec4 v_WorldT_PZ;
 LAYOUT(6) IN mediump vec4 v_PosP;
+LAYOUT(7) IN mediump vec2 v_ParticleTime;
 //$C_PIN1$
 //$C_PIN2$
 
@@ -533,8 +562,18 @@ void main()
 	vec3 worldBinormal = v_WorldB_PY.xyz;
 	vec3 pixelNormalDir = worldNormal;
 	vec4 vcolor = v_VColor;
+	vec2 particleTime = v_ParticleTime;
 	vec3 objectScale = vec3(1.0, 1.0, 1.0);
 
+	// OpenGL classifies the opposite faces as front against DirectX with the same winding,
+	// so flip gl_FrontFacing to behave same as DirectX.
+	// When the vertex shader negates Y (_Y_INVERTED_), the winding is flipped again,
+	// so gl_FrontFacing can be used as it is.
+#ifdef _Y_INVERTED_
+	bool isFrontFace = gl_FrontFacing;
+#else
+	bool isFrontFace = !gl_FrontFacing;
+#endif
 	vec2 screenUV = v_PosP.xy / v_PosP.w;
 	float meshZ =   v_PosP.z / v_PosP.w;
 	screenUV.xy = vec2(screenUV.x + 1.0, screenUV.y + 1.0) * 0.5;
@@ -578,6 +617,9 @@ static const char g_material_fs_src_suf2_refraction[] =
 	float airRefraction = 1.0;
 
 	vec3 dir = mat3(cameraMat) * pixelNormalDir;
+#ifdef _REFRACTION_Y_INVERTED_
+	dir.y = -dir.y;
+#endif
 	vec2 distortUV = dir.xy * (refraction - airRefraction);
 
 	distortUV += screenUV;
@@ -724,6 +766,7 @@ void ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile* m
 	// gradient
 	bool hasGradient = false;
 	bool hasNoise = false;
+	bool hasHsv = false;
 
 	for (const auto& type : materialFile->RequiredMethods)
 	{
@@ -735,6 +778,10 @@ void ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile* m
 		{
 			hasNoise = true;
 		}
+		else if (type == MaterialFile::RequiredPredefinedMethodType::Hsv)
+		{
+			hasHsv = true;
+		}
 	}
 
 	if (hasGradient)
@@ -745,6 +792,11 @@ void ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile* m
 	if (hasNoise)
 	{
 		maincode << Effekseer::Shader::GetNoiseFunctions();
+	}
+
+	if (hasHsv)
+	{
+		maincode << Effekseer::Shader::GetHsvFunctions();
 	}
 
 	for (const auto& gradient : materialFile->FixedGradients)
@@ -926,6 +978,7 @@ ShaderData ShaderGenerator::GenerateShader(MaterialFile* materialFile,
 		{
 			// Vulkan
 			maincode << "#define gl_InstanceID gl_InstanceIndex" << std::endl;
+			maincode << "#define _REFRACTION_Y_INVERTED_ 1" << std::endl;
 		}
 
 		int32_t actualUniformCount = std::min(maximumUniformCount, materialFile->GetUniformCount());
@@ -1070,6 +1123,9 @@ uniform vec4 customData2s[_INSTANCE_COUNT_];
 		baseCode = Replace(baseCode, "$LOCALTIME$", "predefined_uniform.w");
 		baseCode = Replace(baseCode, "$UV$", "uv");
 		baseCode = Replace(baseCode, "$MOD", "mod");
+		baseCode = Replace(baseCode, "$PARTICLE_TIME_NORMALIZED$", "particleTime.x");
+		baseCode = Replace(baseCode, "$PARTICLE_TIME_SECONDS$", "particleTime.y");
+		baseCode = AdaptBoolExpressions(baseCode);
 
 		// replace textures
 		for (int32_t i = 0; i < actualTextureCount; i++)
@@ -1127,8 +1183,8 @@ uniform vec4 customData2s[_INSTANCE_COUNT_];
 	}
 
 	// custom data
-	int32_t layoutOffset = 6;
-	int32_t pvLayoutOffset = 7;
+	int32_t layoutOffset = 7;
+	int32_t pvLayoutOffset = 8;
 
 	if (materialFile->GetCustomData1Count() > 0)
 	{

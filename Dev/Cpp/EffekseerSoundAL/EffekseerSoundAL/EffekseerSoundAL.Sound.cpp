@@ -3,10 +3,10 @@
 // Include
 //----------------------------------------------------------------------------------
 #include "../EffekseerSoundAL.h"
+#include "EffekseerSoundAL.SoundImplemented.h"
+#include "EffekseerSoundAL.SoundLoader.h"
 #include "EffekseerSoundAL.SoundPlayer.h"
 #include "EffekseerSoundAL.SoundVoice.h"
-#include "EffekseerSoundAL.SoundLoader.h"
-#include "EffekseerSoundAL.SoundImplemented.h"
 
 //----------------------------------------------------------------------------------
 //
@@ -17,10 +17,10 @@ namespace EffekseerSound
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-SoundRef Sound::Create( int32_t numVoices )
+SoundRef Sound::Create(int32_t numVoices)
 {
 	auto sound = Effekseer::MakeRefPtr<SoundImplemented>();
-	if( sound->Initialize( numVoices ) )
+	if (sound->Initialize(numVoices))
 	{
 		return sound;
 	}
@@ -30,11 +30,7 @@ SoundRef Sound::Create( int32_t numVoices )
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-SoundImplemented::SoundImplemented()
-	: m_mute	( false )
-	, m_voiceContainer( NULL )
-{
-}
+SoundImplemented::SoundImplemented() = default;
 
 //----------------------------------------------------------------------------------
 //
@@ -42,24 +38,25 @@ SoundImplemented::SoundImplemented()
 SoundImplemented::~SoundImplemented()
 {
 	StopAllVoices();
-	delete m_voiceContainer;
+	delete voiceContainer_;
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-bool SoundImplemented::Initialize( int32_t numVoices )
+bool SoundImplemented::Initialize(int32_t numVoices)
 {
-	m_voiceContainer = new SoundVoiceContainer( this, numVoices );
-	
+	voiceContainer_ = new SoundVoiceContainer(this, numVoices);
+
 	return true;
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundImplemented::SetListener( const ::Effekseer::Vector3D& pos, 
-		const ::Effekseer::Vector3D& at, const ::Effekseer::Vector3D& up )
+void SoundImplemented::SetListener(const ::Effekseer::Vector3D& pos,
+								   const ::Effekseer::Vector3D& at,
+								   const ::Effekseer::Vector3D& up)
 {
 	::Effekseer::Vector3D front;
 	::Effekseer::Vector3D::Normal(front, at - pos);
@@ -90,11 +87,11 @@ void SoundImplemented::Destroy()
 {
 	return ::Effekseer::MakeRefPtr<SoundPlayer>(SoundImplementedRef::FromPinned(this));
 }
-	
+
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-::Effekseer::SoundLoaderRef SoundImplemented::CreateSoundLoader( ::Effekseer::FileInterfaceRef fileInterface )
+::Effekseer::SoundLoaderRef SoundImplemented::CreateSoundLoader(::Effekseer::FileInterfaceRef fileInterface)
 {
 	return ::Effekseer::MakeRefPtr<SoundLoader>(fileInterface);
 }
@@ -104,15 +101,15 @@ void SoundImplemented::Destroy()
 //----------------------------------------------------------------------------------
 void SoundImplemented::StopAllVoices()
 {
-	m_voiceContainer->StopAll();
+	voiceContainer_->StopAll();
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundImplemented::SetMute( bool mute )
+void SoundImplemented::SetMute(bool mute)
 {
-	m_mute = mute;
+	mute_ = mute;
 }
 
 //----------------------------------------------------------------------------------
@@ -120,37 +117,37 @@ void SoundImplemented::SetMute( bool mute )
 //----------------------------------------------------------------------------------
 SoundVoice* SoundImplemented::GetVoice()
 {
-	return m_voiceContainer->GetVoice();
+	return voiceContainer_->GetVoice();
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundImplemented::StopTag( ::Effekseer::SoundTag tag )
+void SoundImplemented::StopTag(::Effekseer::SoundTag tag)
 {
-	m_voiceContainer->StopTag(tag);
+	voiceContainer_->StopTag(tag);
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void SoundImplemented::PauseTag( ::Effekseer::SoundTag tag, bool pause )
+void SoundImplemented::PauseTag(::Effekseer::SoundTag tag, bool pause)
 {
-	m_voiceContainer->PauseTag(tag, pause);
+	voiceContainer_->PauseTag(tag, pause);
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-bool SoundImplemented::CheckPlayingTag( ::Effekseer::SoundTag tag )
+bool SoundImplemented::CheckPlayingTag(::Effekseer::SoundTag tag)
 {
-	return m_voiceContainer->CheckPlayingTag(tag);
+	return voiceContainer_->CheckPlayingTag(tag);
 }
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-}
+} // namespace EffekseerSound
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------

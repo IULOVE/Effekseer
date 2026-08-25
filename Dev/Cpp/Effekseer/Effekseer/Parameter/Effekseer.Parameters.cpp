@@ -4,28 +4,34 @@
 #include "../Effekseer.InstanceGlobal.h"
 #include "../Effekseer.InternalScript.h"
 #include "../Effekseer.InternalStruct.h"
-#include "DynamicParameter.h"
+#include "Effekseer.DynamicParameter.h"
 #include <algorithm>
 
 namespace Effekseer
 {
 
+const int Gradient::KeyMax;
+
 void LoadGradient(Gradient& gradient, uint8_t*& pos, int32_t version)
 {
 	BinaryReader<true> reader(pos, std::numeric_limits<int>::max());
-	reader.Read(gradient.ColorCount);
-	for (int i = 0; i < gradient.ColorCount; i++)
-	{
-		reader.Read(gradient.Colors[i]);
-	}
-
-	reader.Read(gradient.AlphaCount);
-	for (int i = 0; i < gradient.AlphaCount; i++)
-	{
-		reader.Read(gradient.Alphas[i]);
-	}
-
+	LoadGradient(gradient, reader, version);
 	pos += reader.GetOffset();
+}
+
+bool LoadGradient(Gradient& gradient, BinaryReader<true>& reader, int32_t version)
+{
+	(void)version;
+	if (!reader.Read(gradient.ColorCount, 0, Gradient::KeyMax) ||
+		!reader.Read(gradient.Colors.data(), gradient.ColorCount) ||
+		!reader.Read(gradient.AlphaCount, 0, Gradient::KeyMax) ||
+		!reader.Read(gradient.Alphas.data(), gradient.AlphaCount))
+	{
+		gradient.ColorCount = 0;
+		gradient.AlphaCount = 0;
+		return false;
+	}
+	return true;
 }
 
 void NodeRendererTextureUVTypeParameter::Load(uint8_t*& pos, int32_t version)
@@ -85,7 +91,7 @@ void ApplyEq_(T& dstParam, const Effect* e, const InstanceGlobal* instg, const I
 		locals[i] = 0.0f;
 	}
 
-	locals[4] = parrentInstance != nullptr ? parrentInstance->m_LivingTime / 60.0f : 0.0f;
+	locals[4] = parrentInstance != nullptr ? parrentInstance->livingTime_ / 60.0f : 0.0f;
 
 	auto e_ = static_cast<const EffectImplemented*>(e);
 	auto& dp = e_->GetDynamicEquation()[dpInd];

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace Effekseer.Data.Value
 {
-	public class IntWithRandom : IValueChangedFromDefault
+	public class IntWithRandom : IResettableValue, IValueChangedFromDefault
 	{
 		int _value_center = 0;
 		int _value_max = 0;
@@ -334,6 +334,30 @@ namespace Effekseer.Data.Value
 				isCombined);
 
 			Command.CommandManager.Execute(cmd);
+		}
+
+		public void ResetValue()
+		{
+			Command.CommandManager.StartCollection();
+			SetCenter(DefaultValueCenter);
+			SetMax(DefaultValueMax);
+			SetMin(DefaultValueMin);
+			if (CanSelectDynamicEquation)
+			{
+				IsDynamicEquationEnabled.ResetValue();
+				DynamicEquationMin.SetValue(null);
+				DynamicEquationMax.SetValue(null);
+			}
+			DrawnAs = DefaultDrawnAs;
+			Command.CommandManager.EndCollection();
+		}
+
+		public byte[] GetBytes()
+		{
+			byte[] values = new byte[sizeof(float) * 2];
+			BitConverter.GetBytes(Max).CopyTo(values, sizeof(float) * 0);
+			BitConverter.GetBytes(Min).CopyTo(values, sizeof(float) * 1);
+			return values;
 		}
 	}
 }

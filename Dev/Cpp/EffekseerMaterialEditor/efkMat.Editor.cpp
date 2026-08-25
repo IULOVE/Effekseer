@@ -1,13 +1,16 @@
 #define NOMINMAX
-#include "efkMat.Editor.h"
-#include "efkMat.CommandManager.h"
-#include "efkMat.Models.h"
+#define IMGUI_DEFINE_MATH_OPERATORS 1
 
-#include <imgui_node_editor.h>
+#include "efkMat.Editor.h"
 
 #include <imgui_node_editor_internal.h>
 
-#include <imgui_internal.h>
+// #include <imgui_internal.h>
+
+#include "efkMat.CommandManager.h"
+#include "efkMat.GradientEditor.h"
+#include "efkMat.Models.h"
+
 #include <nfd.h>
 
 #include <GUI/MainWindow.h>
@@ -17,8 +20,6 @@
 
 #include <efkMat.StringContainer.h>
 #include <efkMat.TextExporter.h>
-
-#include <ImGradientHDR.h>
 
 #include "../EffekseerMaterialCompiler/OpenGL/EffekseerMaterialCompilerGL.h"
 #include <Effekseer/Material/Effekseer.MaterialFile.h>
@@ -491,13 +492,18 @@ static const char* label_edit_node = "##EDIT_NODE";
 
 bool Editor::InputText(const char* label, std::string& text)
 {
-	char buf[255];
-	memcpy(buf, text.c_str(), text.size());
-	buf[text.size()] = 0;
-
-	if (ImGui::InputText(label, buf, 255))
+	std::array<char, 256> local_buffer;
+	const auto max_len = std::min(text.size(), local_buffer.size() - 1);
+	if (text.size() > 0)
 	{
-		text = buf;
+		memcpy(local_buffer.data(), text.c_str(), max_len);
+	}
+
+	local_buffer[max_len] = 0;
+
+	if (ImGui::InputText(label, local_buffer.data(), local_buffer.size() - 1))
+	{
+		text = local_buffer.data();
 		return true;
 	}
 
@@ -762,8 +768,8 @@ void Editor::Update()
 	else if (ed::ShowBackgroundContextMenu())
 	{
 		ImGui::OpenPopup(label_new_node);
-		searchingKeywords.fill(0);
-		searchingKeywordsActual.fill(0);
+		searchingKeywords_.fill(0);
+		searchingKeywordsActual_.fill(0);
 		isJustNewNodePanelOpened_ = true;
 		currentPin = nullptr;
 		popupPosition = posOnEditor;
@@ -1025,7 +1031,7 @@ void Editor::UpdatePopup()
 				auto desc = std::string("Key : ") + c->KeywordsShown + "\n";
 				desc += StringContainer::GetValue((c->Name + "_Node_Desc").c_str(), "");
 
-				ImGui::SetTooltip(desc.c_str());
+				ImGui::SetTooltip("%s", desc.c_str());
 			}
 		};
 
@@ -1036,19 +1042,19 @@ void Editor::UpdatePopup()
 				return false;
 			}
 
-			if (searchingKeywordsActual[0] == 0)
+			if (searchingKeywordsActual_[0] == 0)
 			{
 				return true;
 			}
 
 			auto name = c->Name;
 
-			if (name.find(searchingKeywordsActual.data()) != std::string::npos)
+			if (name.find(searchingKeywordsActual_.data()) != std::string::npos)
 				return true;
 
 			for (auto keyword : c->Keywords)
 			{
-				if (keyword.find(searchingKeywordsActual.data()) != std::string::npos)
+				if (keyword.find(searchingKeywordsActual_.data()) != std::string::npos)
 					return true;
 			}
 
@@ -1063,16 +1069,16 @@ void Editor::UpdatePopup()
 			ImGui::SetKeyboardFocusHere(0);
 		}
 
-		ImGui::InputText(StringContainer::GetValue("Search").c_str(), searchingKeywords.data(), searchingKeywords.size());
+		ImGui::InputText(StringContainer::GetValue("Search").c_str(), searchingKeywords_.data(), searchingKeywords_.size());
 
-		for (size_t c = 0; c < searchingKeywords.size(); c++)
+		for (size_t c = 0; c < searchingKeywords_.size(); c++)
 		{
-			searchingKeywordsActual[c] = tolower(searchingKeywords[c]);
-			if (searchingKeywordsActual[c] == 0)
+			searchingKeywordsActual_[c] = tolower(searchingKeywords_[c]);
+			if (searchingKeywordsActual_[c] == 0)
 				break;
 		}
 
-		if (searchingKeywordsActual[0] == 0)
+		if (searchingKeywordsActual_[0] == 0)
 		{
 			for (auto group : library->Root->Groups)
 			{
@@ -1253,8 +1259,8 @@ void Editor::UpdateCreating()
 				ed::Suspend();
 				popupPosition = posOnEditor;
 				ImGui::OpenPopup(label_new_node);
-				searchingKeywords.fill(0);
-				searchingKeywordsActual.fill(0);
+				searchingKeywords_.fill(0);
+				searchingKeywordsActual_.fill(0);
 				isJustNewNodePanelOpened_ = true;
 				ed::Resume();
 			}
@@ -1391,10 +1397,7 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 		}
 		else if (type == ValueType::String)
 		{
-			// is memory safe?
-
 			auto str = p->Str;
-			str.resize(str.size() + 16, 0);
 
 			// Shader result doesn't change
 			if (InputText(nameStr.c_str(), str))
@@ -1408,7 +1411,7 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 			{
 				if (ImGui::IsItemHovered() && !ImGui::IsItemActive())
 				{
-					ImGui::SetTooltip(p->Str.c_str());
+					ImGui::SetTooltip("%s", p->Str.c_str());
 				}
 			};
 
@@ -1518,7 +1521,7 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 					ImGui::EndCombo();
 				}
 			}
-			else
+			else if (name == std::string("ShadingModel"))
 			{
 				const char* items[] = {"Lit", "Unlit"};
 
@@ -1539,122 +1542,37 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 					ImGui::EndCombo();
 				}
 			}
+			else if (name == std::string("Condition"))
+			{
+				const char* items[] = {"A < B", "A <= B", "A > B", "A >= B", "A == B", "A != B"};
+
+				if (ImGui::BeginCombo(nameStr.c_str(), items[static_cast<int>(floatValues[0])]))
+				{
+					for (size_t i = 0; i < 6; i++)
+					{
+						auto isSelected = static_cast<int>(floatValues[0]) == i;
+						if (ImGui::Selectable(items[i], isSelected))
+						{
+							floatValues[0] = i;
+							material->ChangeValue(p, floatValues);
+							material->MakeDirty(node);
+						}
+						if (isSelected)
+							ImGui::SetItemDefaultFocus();
+					}
+					ImGui::EndCombo();
+				}
+			}
 		}
 		else if (type == ValueType::Gradient)
 		{
 			assert(p->GradientData != nullptr);
 
-			ImGradientHDRState state;
-
-			state.ColorCount = p->GradientData->ColorCount;
-
-			for (int i = 0; i < state.ColorCount; i++)
+			auto gradient = *p->GradientData;
+			if (UpdateGradientEditor(static_cast<int32_t>(node->GUID), nameStr.c_str(), gradient))
 			{
-				state.Colors[i].Color = p->GradientData->Colors[i].Color;
-				state.Colors[i].Intensity = p->GradientData->Colors[i].Intensity;
-				state.Colors[i].Position = p->GradientData->Colors[i].Position;
+				material->ChangeValue(p, gradient);
 			}
-
-			state.AlphaCount = p->GradientData->AlphaCount;
-
-			for (int i = 0; i < state.AlphaCount; i++)
-			{
-				state.Alphas[i].Alpha = p->GradientData->Alphas[i].Alpha;
-				state.Alphas[i].Position = p->GradientData->Alphas[i].Position;
-			}
-
-			ImGradientHDRTemporaryState tempState;
-
-			ImGui::PushID(node->GUID);
-
-			const int idSelectedMarkerType = 100;
-			const int idSelectedIndex = 101;
-			const int idDraggingMarkerType = 102;
-			const int idDraggingIndex = 103;
-
-			tempState.selectedMarkerType = static_cast<ImGradientHDRMarkerType>(ImGui::GetStateStorage()->GetInt(idSelectedMarkerType, static_cast<int>(ImGradientHDRMarkerType::Unknown)));
-			tempState.selectedIndex = ImGui::GetStateStorage()->GetInt(idSelectedIndex, -1);
-			tempState.draggingMarkerType = static_cast<ImGradientHDRMarkerType>(ImGui::GetStateStorage()->GetInt(idDraggingMarkerType, static_cast<int>(ImGradientHDRMarkerType::Unknown)));
-			tempState.draggingIndex = ImGui::GetStateStorage()->GetInt(idDraggingIndex, -1);
-
-			if (ImGradientHDR(node->GUID, state, tempState))
-			{
-				material->MakeDirty(node);
-			}
-
-			if (tempState.selectedMarkerType == ImGradientHDRMarkerType::Color)
-			{
-				auto selectedColorMarker = state.GetColorMarker(tempState.selectedIndex);
-				if (selectedColorMarker != nullptr)
-				{
-					if (ImGui::ColorEdit3("Color", selectedColorMarker->Color.data(), ImGuiColorEditFlags_Float))
-					{
-						material->MakeDirty(node);
-					}
-
-					if (ImGui::DragFloat("Intensity", &selectedColorMarker->Intensity, 0.1f, 0.0f, 100.0f, "%f", 1.0f))
-					{
-						material->MakeDirty(node);
-					}
-				}
-			}
-
-			if (tempState.selectedMarkerType == ImGradientHDRMarkerType::Alpha)
-			{
-				auto selectedAlphaMarker = state.GetAlphaMarker(tempState.selectedIndex);
-				if (selectedAlphaMarker != nullptr)
-				{
-					if (ImGui::DragFloat("Alpha", &selectedAlphaMarker->Alpha, 0.1f, 0.0f, 1.0f, "%f", 1.0f))
-					{
-						material->MakeDirty(node);
-					}
-				}
-			}
-
-			if (tempState.selectedMarkerType != ImGradientHDRMarkerType::Unknown)
-			{
-				if (ImGui::Button("Delete"))
-				{
-					material->MakeDirty(node);
-
-					if (tempState.selectedMarkerType == ImGradientHDRMarkerType::Color)
-					{
-						state.RemoveColorMarker(tempState.selectedIndex);
-						tempState = ImGradientHDRTemporaryState{};
-					}
-					else if (tempState.selectedMarkerType == ImGradientHDRMarkerType::Alpha)
-					{
-						state.RemoveAlphaMarker(tempState.selectedIndex);
-						tempState = ImGradientHDRTemporaryState{};
-					}
-				}
-			}
-
-			{
-				p->GradientData->ColorCount = state.ColorCount;
-
-				for (int i = 0; i < state.ColorCount; i++)
-				{
-					p->GradientData->Colors[i].Color = state.Colors[i].Color;
-					p->GradientData->Colors[i].Intensity = state.Colors[i].Intensity;
-					p->GradientData->Colors[i].Position = state.Colors[i].Position;
-				}
-
-				p->GradientData->AlphaCount = state.AlphaCount;
-
-				for (int i = 0; i < state.AlphaCount; i++)
-				{
-					p->GradientData->Alphas[i].Alpha = state.Alphas[i].Alpha;
-					p->GradientData->Alphas[i].Position = state.Alphas[i].Position;
-				}
-			}
-
-			ImGui::GetStateStorage()->SetInt(idSelectedMarkerType, static_cast<int>(tempState.selectedMarkerType));
-			ImGui::GetStateStorage()->SetInt(idSelectedIndex, static_cast<int>(tempState.selectedIndex));
-			ImGui::GetStateStorage()->SetInt(idDraggingMarkerType, static_cast<int>(tempState.draggingMarkerType));
-			ImGui::GetStateStorage()->SetInt(idDraggingIndex, static_cast<int>(tempState.draggingIndex));
-
-			ImGui::PopID();
 		}
 		else
 		{
@@ -1665,7 +1583,7 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 
 		if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && descStr != "")
 		{
-			ImGui::SetTooltip(descStr.c_str());
+			ImGui::SetTooltip("%s", descStr.c_str());
 		}
 	};
 
@@ -1696,11 +1614,11 @@ void Editor::UpdateParameterEditor(std::shared_ptr<Node> node)
 	if (node->Parameter->HasDescription)
 	{
 		ImGui::Separator();
-		ImGui::Text(StringContainer::GetValue("Description_Name").c_str());
+		ImGui::Text("%s", StringContainer::GetValue("Description_Name").c_str());
 
 		if (ImGui::IsItemHovered())
 		{
-			ImGui::SetTooltip(StringContainer::GetValue("Description_Desc").c_str());
+			ImGui::SetTooltip("%s", StringContainer::GetValue("Description_Desc").c_str());
 		}
 
 		// is memory safe?
@@ -1729,14 +1647,24 @@ void Editor::UpdatePreview()
 	size.y = Preview::TextureSize;
 	ImGui::Image((void*)preview_->GetInternal(), size, ImVec2(0.0, 1.0), ImVec2(1.0, 0.0));
 
-	if (ImGui::ImageButton((ImTextureID)previewTypeButtons_[0]->GetInternal(), ImVec2(20.0, 20.0), ImVec2(0.0, 1.0), ImVec2(1.0, 0.0)))
+	if (ImGui::ImageButton(
+			"##preview_screen",
+			ImTextureRef((ImTextureID)previewTypeButtons_[0]->GetInternal()),
+			ImVec2(20.0, 20.0),
+			ImVec2(0.0, 1.0),
+			ImVec2(1.0, 0.0)))
 	{
 		preview_->ModelType = PreviewModelType::Screen;
 	}
 
 	ImGui::SameLine();
 
-	if (ImGui::ImageButton((ImTextureID)previewTypeButtons_[1]->GetInternal(), ImVec2(20.0, 20.0), ImVec2(0.0, 1.0), ImVec2(1.0, 0.0)))
+	if (ImGui::ImageButton(
+			"##preview_sphere",
+			ImTextureRef((ImTextureID)previewTypeButtons_[1]->GetInternal()),
+			ImVec2(20.0, 20.0),
+			ImVec2(0.0, 1.0),
+			ImVec2(1.0, 0.0)))
 	{
 		preview_->ModelType = PreviewModelType::Sphere;
 	}
@@ -1747,11 +1675,11 @@ void Editor::UpdatePreview()
 		if (previewTextureCount_ > Effekseer::UserTextureSlotMax)
 		{
 			ImGui::TextColored(
-				ImColor(255, 0, 0, 255), (textureNumHeader + " %d / %d").c_str(), previewTextureCount_, Effekseer::UserTextureSlotMax);
+				ImColor(255, 0, 0, 255), "%s %d / %d", textureNumHeader.c_str(), previewTextureCount_, Effekseer::UserTextureSlotMax);
 		}
 		else
 		{
-			ImGui::Text((textureNumHeader + " %d / %d").c_str(), previewTextureCount_, Effekseer::UserTextureSlotMax);
+			ImGui::Text("%s %d / %d", textureNumHeader.c_str(), previewTextureCount_, Effekseer::UserTextureSlotMax);
 		}
 	}
 
@@ -1763,11 +1691,11 @@ void Editor::UpdatePreview()
 		if (previewUniformCount_ > uniformMax)
 		{
 			ImGui::TextColored(
-				ImColor(255, 0, 0, 255), (uniformNumHeader + " %d / %d").c_str(), previewUniformCount_, uniformMax);
+				ImColor(255, 0, 0, 255), "%s %d / %d", uniformNumHeader.c_str(), previewUniformCount_, uniformMax);
 		}
 		else
 		{
-			ImGui::Text((uniformNumHeader + " %d / %d").c_str(), previewUniformCount_, uniformMax);
+			ImGui::Text("%s %d / %d", uniformNumHeader.c_str(), previewUniformCount_, uniformMax);
 		}
 	}
 
@@ -1778,11 +1706,11 @@ void Editor::UpdatePreview()
 		if (previewGradientCount_ > uniformMax)
 		{
 			ImGui::TextColored(
-				ImColor(255, 0, 0, 255), (uniformNumHeader + " %d / %d").c_str(), previewGradientCount_, uniformMax);
+				ImColor(255, 0, 0, 255), "%s %d / %d", uniformNumHeader.c_str(), previewGradientCount_, uniformMax);
 		}
 		else
 		{
-			ImGui::Text((uniformNumHeader + " %d / %d").c_str(), previewGradientCount_, uniformMax);
+			ImGui::Text("%s %d / %d", uniformNumHeader.c_str(), previewGradientCount_, uniformMax);
 		}
 	}
 }
@@ -1844,7 +1772,7 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 
 		ImGui::BeginVertical("content");
 		ImGui::BeginHorizontal("horizontal");
-		ImGui::Text(node->Properties[0]->Str.c_str());
+		ImGui::Text("%s", node->Properties[0]->Str.c_str());
 		ImGui::EndHorizontal();
 
 		auto editor = reinterpret_cast<ax::NodeEditor::Detail::EditorContext*>(ed::GetCurrentEditor());
@@ -1892,6 +1820,9 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 
 	ImGui::PushID(node->GUID);
 
+	ImRect nodePreviewRect;
+	uint64_t nodePreviewTexture = 0;
+
 	ImGui::BeginVertical("node");
 
 	// Header
@@ -1913,7 +1844,7 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 		headerName = node->Parameter->GetHeader(GetSelectedMaterial(), node);
 	}
 
-	ImGui::Text(headerName.c_str());
+	ImGui::Text("%s", headerName.c_str());
 
 	// show preview button
 	ImGui::Spring(1, 0);
@@ -1966,11 +1897,11 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 
 			if (pin->IsEnabled)
 			{
-				ImGui::Text(text.c_str());
+				ImGui::Text("%s", text.c_str());
 			}
 			else
 			{
-				ImGui::TextColored(ImColor(100, 100, 100), text.c_str());
+				ImGui::TextColored(ImColor(100, 100, 100), "%s", text.c_str());
 			}
 
 			ImGui::EndHorizontal();
@@ -1987,7 +1918,40 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 				ImVec2 size;
 				size.x = Preview::TextureSize;
 				size.y = Preview::TextureSize;
-				ImGui::Image((void*)preview->GetPreview()->GetInternal(), size, ImVec2(0.0, 1.0), ImVec2(1.0, 0.0));
+				nodePreviewRect = ImRect(ImGui::GetCursorScreenPos(), ImGui::GetCursorScreenPos() + size);
+				nodePreviewTexture = preview->GetPreview()->GetInternal();
+				ImGui::Dummy(size);
+
+				const auto screenIcon = previewTypeButtons_.size() > 0 && previewTypeButtons_[0] != nullptr ? previewTypeButtons_[0]->GetInternal() : 0;
+				const auto sphereIcon = previewTypeButtons_.size() > 1 && previewTypeButtons_[1] != nullptr ? previewTypeButtons_[1]->GetInternal() : 0;
+				const ImVec2 iconSize(20.0f, 20.0f);
+				const auto itemSpacing = ImGui::GetStyle().ItemSpacing;
+				ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, itemSpacing.y));
+				ImGui::BeginHorizontal("preview_controls");
+
+				if (screenIcon != 0 &&
+					ImGui::ImageButton(
+						"##node_preview_screen_icon",
+						ImTextureRef((ImTextureID)screenIcon),
+						iconSize,
+						ImVec2(0.0f, 1.0f),
+						ImVec2(1.0f, 0.0f)))
+				{
+					preview->GetPreview()->ModelType = PreviewModelType::Screen;
+				}
+
+				if (sphereIcon != 0 &&
+					ImGui::ImageButton(
+						"##node_preview_sphere_icon",
+						ImTextureRef((ImTextureID)sphereIcon),
+						iconSize,
+						ImVec2(0.0f, 1.0f),
+						ImVec2(1.0f, 0.0f)))
+				{
+					preview->GetPreview()->ModelType = PreviewModelType::Sphere;
+				}
+				ImGui::EndHorizontal();
+				ImGui::PopStyleVar();
 			}
 		}
 
@@ -2020,9 +1984,10 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 				typeShape = "-";
 			}
 
-			ImGui::Text((StringContainer::GetValue((pin->Parameter->Name + "_Name").c_str(), pin->Parameter->Name.c_str()) +
-						 std::string(" ") + typeShape)
-							.c_str());
+			ImGui::Text("%s",
+						 (StringContainer::GetValue((pin->Parameter->Name + "_Name").c_str(), pin->Parameter->Name.c_str()) +
+						  std::string(" ") + typeShape)
+							 .c_str());
 
 			ImGui::EndHorizontal();
 
@@ -2036,54 +2001,32 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 
 	ImGui::EndHorizontal();
 
-	// show a preview
-	if (node->IsPreviewOpened)
-	{
-		auto preview = (NodeUserDataObject*)node->UserObj.get();
-		if (preview != nullptr)
-		{
-			if (ImGui::ImageButton(
-					(ImTextureID)previewTypeButtons_[0]->GetInternal(), ImVec2(20.0, 20.0), ImVec2(0.0, 1.0), ImVec2(1.0, 0.0)))
-			{
-				preview->GetPreview()->ModelType = PreviewModelType::Screen;
-			}
-
-			ImGui::SameLine();
-
-			if (ImGui::ImageButton(
-					(ImTextureID)previewTypeButtons_[1]->GetInternal(), ImVec2(20.0, 20.0), ImVec2(0.0, 1.0), ImVec2(1.0, 0.0)))
-			{
-				preview->GetPreview()->ModelType = PreviewModelType::Sphere;
-			}
-		}
-	}
-
 	// show an warning
 	if (node->CurrentWarning != WarningType::None)
 	{
 		if (node->CurrentWarning == WarningType::DifferentSampler)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_DifferentSampler").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_DifferentSampler").c_str());
 		}
 		else if (node->CurrentWarning == WarningType::WrongInputType)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_WrongInputType").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_WrongInputType").c_str());
 		}
 		else if (node->CurrentWarning == WarningType::WrongProperty)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_WrongProperty").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_WrongProperty").c_str());
 		}
 		else if (node->CurrentWarning == WarningType::SameName)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_SameName").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_SameName").c_str());
 		}
 		else if (node->CurrentWarning == WarningType::InvalidName)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_InvalidName").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_InvalidName").c_str());
 		}
 		else if (node->CurrentWarning == WarningType::PixelNodeAndNormal)
 		{
-			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), StringContainer::GetValue("Warning_PixelNodeAndNormal").c_str());
+			ImGui::TextColored(ImColor(1.0f, 0.0f, 0.0f, 1.0f), "%s", StringContainer::GetValue("Warning_PixelNodeAndNormal").c_str());
 		}
 		else
 		{
@@ -2107,7 +2050,17 @@ void Editor::UpdateNode(std::shared_ptr<Node> node)
 							   ImVec2(itemRectMax.x, itemRectMin.y + 30 * mainWindow->GetDPIScale()),
 							   IM_COL32(110, 110, 110, 255),
 							   ed::GetStyle().NodeRounding,
-							   ImDrawCornerFlags_Top);
+							   ImDrawFlags_RoundCornersTop);
+
+	if (nodePreviewTexture != 0)
+	{
+		bg_drawList->AddImage(
+			ImTextureRef((ImTextureID)nodePreviewTexture),
+			nodePreviewRect.Min,
+			nodePreviewRect.Max,
+			ImVec2(0.0f, 1.0f),
+			ImVec2(1.0f, 0.0f));
+	}
 
 	node->ClearPosDirtied();
 }

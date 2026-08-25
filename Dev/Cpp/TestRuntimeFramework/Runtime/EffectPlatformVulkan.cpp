@@ -4,6 +4,7 @@
 #include "../../3rdParty/LLGI/src/Vulkan/LLGI.GraphicsVulkan.h"
 #include "../../3rdParty/LLGI/src/Vulkan/LLGI.PlatformVulkan.h"
 #include "../../3rdParty/LLGI/src/Vulkan/LLGI.TextureVulkan.h"
+#include "../../EffekseerRendererLLGI/EffekseerRendererLLGI/EffekseerRendererLLGI.Renderer.h"
 #include "../3rdParty/LLGI/src/LLGI.CommandList.h"
 
 #include "../../3rdParty/LLGI/src/LLGI.Compiler.h"
@@ -115,10 +116,11 @@ public:
 
 	virtual bool OnDistorting(EffekseerRenderer::Renderer* renderer) override
 	{
+		platform_->UpdateBackgroundTextureForDistortion();
 
 		if (texture_ == nullptr)
 		{
-			auto tex = (LLGI::TextureVulkan*)(platform_->GetCheckedTexture());
+			auto tex = (LLGI::TextureVulkan*)(platform_->GetBackgroundTexture());
 			EffekseerRendererVulkan::VulkanImageInfo info;
 			info.image = static_cast<VkImage>(tex->GetImage());
 			info.format = static_cast<VkFormat>(tex->GetVulkanFormat());
@@ -197,6 +199,21 @@ EffekseerRenderer::RendererRef EffectPlatformVulkan::CreateRenderer()
 	return renderer;
 }
 
+Effekseer::Backend::TextureRef EffectPlatformVulkan::CreateEffekseerTexture(LLGI::Texture* texture)
+{
+	auto vulkanTexture = static_cast<LLGI::TextureVulkan*>(texture);
+	if (vulkanTexture == nullptr)
+	{
+		return nullptr;
+	}
+
+	EffekseerRendererVulkan::VulkanImageInfo info;
+	info.image = static_cast<VkImage>(vulkanTexture->GetImage());
+	info.format = static_cast<VkFormat>(vulkanTexture->GetVulkanFormat());
+	info.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+	return EffekseerRendererVulkan::CreateTexture(GetRenderer()->GetGraphicsDevice(), info);
+}
+
 EffectPlatformVulkan::~EffectPlatformVulkan()
 {
 }
@@ -208,7 +225,28 @@ void EffectPlatformVulkan::InitializeDevice(const EffectPlatformInitializingPara
 
 void EffectPlatformVulkan::DestroyDevice()
 {
+	ES_SAFE_RELEASE(backgroundTexture_);
+
 	EffectPlatformLLGI::DestroyDevice();
+}
+
+void EffectPlatformVulkan::BeginCompute()
+{
+	EffectPlatformLLGI::BeginCompute();
+
+	auto cl = static_cast<LLGI::CommandListVulkan*>(commandList_.get());
+	EffekseerRendererVulkan::BeginCommandList(commandListEfk_, static_cast<VkCommandBuffer>(cl->GetCommandBuffer()));
+	GetRenderer()->SetCommandList(commandListEfk_);
+	GetRenderer()->GetGraphicsDevice()->BeginComputePass();
+}
+
+void EffectPlatformVulkan::EndCompute()
+{
+	GetRenderer()->GetGraphicsDevice()->EndComputePass();
+	GetRenderer()->SetCommandList(nullptr);
+	EffekseerRendererVulkan::EndCommandList(commandListEfk_);
+
+	EffectPlatformLLGI::EndCompute();
 }
 
 void EffectPlatformVulkan::BeginRendering()
@@ -228,7 +266,29 @@ void EffectPlatformVulkan::EndRendering()
 	EffectPlatformLLGI::EndRendering();
 }
 
-LLGI::Texture* EffectPlatformVulkan::GetCheckedTexture() const
+LLGI::Texture* EffectPlatformVulkan::GetBackgroundTexture()
 {
-	return checkTexture_;
+	if (backgroundTexture_ == nullptr)
+	{
+		LLGI::TextureParameter param;
+		param.Size = LLGI::Vec3I(initParam_.WindowSize[0], initParam_.WindowSize[1], 1);
+		backgroundTexture_ = graphics_->CreateTexture(param);
+	}
+
+	return backgroundTexture_;
+}
+
+void EffectPlatformVulkan::UpdateBackgroundTextureForDistortion()
+{
+	auto background = GetBackgroundTexture();
+	auto efkCommandList = static_cast<EffekseerRendererLLGI::CommandList*>(commandListEfk_.Get())->GetInternal();
+
+	efkCommandList->EndRenderPassWithPlatformPtr();
+	commandList_->EndRenderPass();
+	commandList_->CopyTexture(colorBuffer_, background);
+
+	renderPass_->SetIsColorCleared(false);
+	renderPass_->SetIsDepthCleared(false);
+	commandList_->BeginRenderPass(renderPass_);
+	efkCommandList->BeginRenderPassWithPlatformPtr(nullptr);
 }

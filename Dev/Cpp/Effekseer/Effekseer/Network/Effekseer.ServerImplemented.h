@@ -7,8 +7,8 @@
 #include "../Effekseer.Base.h"
 #include "Effekseer.Server.h"
 
-#include "Effekseer.Socket.h"
 #include "Effekseer.Session.h"
+#include "Effekseer.Socket.h"
 
 #include <string>
 
@@ -39,7 +39,7 @@ private:
 	bool listening_ = false;
 
 	std::thread thread_;
-	std::mutex clientsMutex_;
+	mutable std::mutex clientsMutex_;
 
 	std::vector<std::unique_ptr<InternalClient>> clients_;
 	std::map<std::u16string, EffectParameter> effects_;

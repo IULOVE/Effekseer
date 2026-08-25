@@ -21,6 +21,7 @@ using Direct3DPixelShader9Ptr = std::unique_ptr<IDirect3DPixelShader9, Effekseer
 using Direct3DVertexDeclaration9Ptr = std::unique_ptr<IDirect3DVertexDeclaration9, Effekseer::ReferenceDeleter<IDirect3DVertexDeclaration9>>;
 using Direct3DTexture9Ptr = std::unique_ptr<IDirect3DTexture9, Effekseer::ReferenceDeleter<IDirect3DTexture9>>;
 using Direct3DSurface9Ptr = std::unique_ptr<IDirect3DSurface9, Effekseer::ReferenceDeleter<IDirect3DSurface9>>;
+using Direct3DQuery9Ptr = std::unique_ptr<IDirect3DQuery9, Effekseer::ReferenceDeleter<IDirect3DQuery9>>;
 using Direct3DVertexDeclaration9Ptr = std::unique_ptr<IDirect3DVertexDeclaration9, Effekseer::ReferenceDeleter<IDirect3DVertexDeclaration9>>;
 
 class GraphicsDevice;
@@ -178,6 +179,7 @@ private:
 	GraphicsDevice* graphicsDevice_ = nullptr;
 	Effekseer::CustomVector<Effekseer::Backend::VertexLayoutElement> elements_;
 	Direct3DVertexDeclaration9Ptr vertexDeclaration_;
+	bool hasInstanceIndex_ = false;
 
 	bool Generate();
 
@@ -185,7 +187,7 @@ public:
 	VertexLayout(GraphicsDevice* graphicsDevice);
 	~VertexLayout() override;
 
-	void MakeGenerated();
+	void MakeGenerated(bool hasInstanceIndex = false);
 
 	bool Init(const Effekseer::Backend::VertexLayoutElement* elements, int32_t elementCount);
 

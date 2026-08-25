@@ -1,5 +1,7 @@
 ﻿#include "DeviceVulkan.h"
 
+#include <LLGI.Texture.h>
+
 bool DeviceVulkan::Initialize(const char* windowTitle, Utils::Vec2I windowSize)
 {
 	// A code to initialize DirectX12 is too long, so I use LLGI
@@ -59,10 +61,6 @@ void DeviceVulkan::Terminate()
 	window.reset();
 }
 
-void DeviceVulkan::ClearScreen()
-{
-}
-
 bool DeviceVulkan::NewFrame()
 {
 	if (!platform->NewFrame())
@@ -72,25 +70,47 @@ bool DeviceVulkan::NewFrame()
 
 	commandList = commandListPool->Get();
 
-	LLGI::Color8 color;
-	color.R = 0;
-	color.G = 0;
-	color.B = 0;
-	color.A = 255;
-
-	commandList->Begin();
-	commandList->BeginRenderPass(platform->GetCurrentScreen(color, true, true));
-
 	// Call on starting of a frame
 	// フレームの開始時に呼ぶ
 	efkMemoryPool->NewFrame();
+
+	commandList->Begin();
 
 	// Begin a command list
 	// コマンドリストを開始する。
 	EffekseerRendererVulkan::BeginCommandList(efkCommandList, GetCommandList());
 	efkRenderer->SetCommandList(efkCommandList);
 
+#if defined(_WIN32)
+	bool windowActive = GetActiveWindow() == window->GetNativePtr(0);
+	for (int key = 0; key < 256; key++)
+	{
+		Utils::Input::UpdateKeyState(key, windowActive && (GetAsyncKeyState(key) & 0x01) != 0);
+	}
+#endif
+
 	return true;
+}
+
+void DeviceVulkan::BeginComputePass()
+{
+	commandList->BeginComputePass();
+}
+
+void DeviceVulkan::EndComputePass()
+{
+	commandList->EndComputePass();
+}
+
+void DeviceVulkan::BeginRenderPass()
+{
+	LLGI::Color8 color{0, 0, 0, 255};
+	commandList->BeginRenderPass(platform->GetCurrentScreen(color, true, true));
+}
+
+void DeviceVulkan::EndRenderPass()
+{
+	commandList->EndRenderPass();
 }
 
 void DeviceVulkan::PresentDevice()
@@ -100,7 +120,6 @@ void DeviceVulkan::PresentDevice()
 	efkRenderer->SetCommandList(nullptr);
 	EffekseerRendererVulkan::EndCommandList(efkCommandList);
 
-	commandList->EndRenderPass();
 	commandList->End();
 
 	graphics->Execute(commandList);
@@ -108,7 +127,7 @@ void DeviceVulkan::PresentDevice()
 	platform->Present();
 }
 
-void DeviceVulkan::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
+void DeviceVulkan::SetupEffekseerModules(::Effekseer::ManagerRef efkManager, bool usingProfiler)
 {
 	// Create a  graphics device
 	// 描画デバイスの作成
@@ -125,8 +144,17 @@ void DeviceVulkan::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
 	renderPassInfo.DoesPresentToScreen = true;
 	renderPassInfo.RenderTextureCount = 1;
 	renderPassInfo.RenderTextureFormats[0] = VK_FORMAT_B8G8R8A8_UNORM;
-	renderPassInfo.DepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+	auto screenRenderPass = platform->GetCurrentScreen();
+	if (screenRenderPass != nullptr && screenRenderPass->GetHasDepthTexture())
+	{
+		auto depthFormat = screenRenderPass->GetDepthTexture()->GetFormat();
+		renderPassInfo.DepthFormat = LLGI::VulkanHelper::TextureFormatToVkFormat(depthFormat);
+	}
 	efkRenderer = ::EffekseerRendererVulkan::Create(graphicsDevice, renderPassInfo, 8000);
+	if (efkRenderer == nullptr)
+	{
+		return;
+	}
 
 	// Create a memory pool
 	// メモリプールの作成
@@ -152,4 +180,9 @@ void DeviceVulkan::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
 	efkManager->SetModelLoader(efkRenderer->CreateModelLoader());
 	efkManager->SetMaterialLoader(efkRenderer->CreateMaterialLoader());
 	efkManager->SetCurveLoader(Effekseer::MakeRefPtr<Effekseer::CurveLoader>());
+
+	if (usingProfiler)
+	{
+		efkManager->SetGpuTimer(efkRenderer->CreateGpuTimer());
+	}
 }

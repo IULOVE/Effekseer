@@ -2,14 +2,16 @@
 #pragma once
 
 #include "../Graphics/Color.h"
-#include "../Graphics/PostEffects.h"
-#include "../Graphics/PostProcess.h"
-#include "../Graphics/StaticMeshRenderer.h"
 #include "../Graphics/efk.Graphics.h"
 #include "../Math/Matrix44F.h"
 #include "../Math/Vector2I.h"
 #include "../Math/Vector3F.h"
 #include <Effekseer.h>
+#include <EffekseerToolRuntime/BackgroundPlaneRenderer.h>
+#include <EffekseerToolRuntime/GroundPlaneRenderer.h>
+#include <EffekseerToolRuntime/PostEffects.h>
+#include <EffekseerToolRuntime/PostProcess.h>
+#include <EffekseerToolRuntime/RenderImage.h>
 
 namespace Effekseer
 {
@@ -20,7 +22,6 @@ class GraphicsDevice;
 class SoundDevice;
 class Effect;
 class EffectSetting;
-class RenderImage;
 
 /**
  * \brief Can be used by the editor for additional rendering during effect rendering
@@ -33,7 +34,7 @@ public:
 	{
 	}
 
-	virtual void OnAfterClear(){};
+	virtual void OnAfterClear() {};
 
 	virtual ~EffectRendererCallback()
 	{
@@ -56,29 +57,12 @@ struct EffectRendererParameter
 	bool IsGroundShown = false;
 	int32_t GroundExtent = 10;
 	float GroundHeight = 0.0f;
+	bool IsGroundCollisionEnabled = false;
 };
 
 #if !defined(SWIG)
-
-class GroundRenderer
-{
-private:
-	std::shared_ptr<Effekseer::Tool::StaticMeshRenderer> groudMeshRenderer_;
-	bool Initialize(Effekseer::RefPtr<Effekseer::Backend::GraphicsDevice> graphicsDevice);
-	int32_t GroundExtent = 10;
-
-public:
-	float GroundHeight = 0.0f;
-
-	void SetExtent(int32_t extent);
-
-	static std::shared_ptr<GroundRenderer> Create(Effekseer::RefPtr<Effekseer::Backend::GraphicsDevice> graphicsDevice);
-
-	void UpdateGround();
-
-	void Render(EffekseerRenderer::RendererRef renderer);
-};
-
+using BackgroundRenderer = Effekseer::ToolRuntime::BackgroundPlaneRenderer;
+using GroundRenderer = Effekseer::ToolRuntime::GroundPlaneRenderer;
 #endif
 
 class EffectRenderer
@@ -124,13 +108,12 @@ protected:
 	EffekseerRenderer::RendererRef renderer_;
 	std::shared_ptr<Effekseer::Tool::Effect> effect_;
 
-	std::shared_ptr<Effekseer::Tool::StaticMesh> backgroundMesh_;
-	std::shared_ptr<Effekseer::Tool::StaticMeshRenderer> backgroundRenderer_;
+	std::shared_ptr<BackgroundRenderer> backgroundRenderer_;
 	Effekseer::TextureRef backgroundTexture_;
-	Effekseer::Color backgroundMeshColor_{};
 
 	Vector2I screenSize_;
 	ViewerEffectBehavior behavior_;
+	std::vector<ViewerExternalModel> externalModels_;
 
 	Effekseer::Backend::TextureRef hdrRenderTextureMSAA;
 	Effekseer::Backend::TextureRef hdrRenderTexture;
@@ -144,10 +127,10 @@ protected:
 	Effekseer::Backend::TextureRef backTexture;
 	Effekseer::Backend::TextureRef viewRenderTexture;
 
-	std::unique_ptr<PostProcess> overdrawEffect_;
-	std::unique_ptr<BloomPostEffect> bloomEffect_;
-	std::unique_ptr<LinearToSRGBPostEffect> linearToSRGBEffect_;
-	std::unique_ptr<TonemapPostEffect> tonemapEffect_;
+	std::unique_ptr<Effekseer::ToolRuntime::PostProcess> overdrawEffect_;
+	std::unique_ptr<Effekseer::ToolRuntime::BloomPostEffect> bloomEffect_;
+	std::unique_ptr<Effekseer::ToolRuntime::LinearToSRGBPostEffect> linearToSRGBEffect_;
+	std::unique_ptr<Effekseer::ToolRuntime::TonemapPostEffect> tonemapEffect_;
 
 	bool m_isSRGBMode = false;
 	uint32_t msaaSamples = 4;
@@ -157,6 +140,7 @@ protected:
 	::Effekseer::Vector3D m_rootRotation;
 	::Effekseer::Vector3D m_rootScale;
 	int32_t m_time = 0;
+	bool initialFrameUpdated_ = false;
 	int m_step = 1;
 	std::vector<HandleHolder> handles_;
 
@@ -164,6 +148,8 @@ protected:
 
 	Effekseer::Backend::ShaderRef whiteParticleSpriteShader_;
 	Effekseer::Backend::ShaderRef whiteParticleModelShader_;
+	Effekseer::GpuTimerRef gpuTimer_;
+	bool gpuTimerEnabled_ = false;
 
 	std::shared_ptr<GroundRenderer> groundRenderer_;
 
@@ -171,8 +157,6 @@ protected:
 	Effekseer::Tool::PostEffectParameter postEffectParameter_;
 
 	float lodDistanceBias_ = 0.0f;
-
-	bool UpdateBackgroundMesh(const Color& backgroundColor);
 
 	void CopyToBack();
 
@@ -213,7 +197,7 @@ public:
 	void UpdatePaused();
 	void Update();
 	void Update(int32_t frame);
-	void Render(std::shared_ptr<RenderImage> renderImage);
+	void Render(std::shared_ptr<Effekseer::ToolRuntime::RenderImage> renderImage);
 
 	void SetLODDistanceBias(float distanceBias);
 
@@ -224,11 +208,24 @@ public:
 	const ViewerEffectBehavior& GetBehavior() const;
 	void SetBehavior(const ViewerEffectBehavior& behavior);
 
+	const std::vector<ViewerExternalModel>& GetExternalModels() const
+	{
+		return externalModels_;
+	}
+
+	void SetExternalModels(const std::vector<ViewerExternalModel>& models)
+	{
+		externalModels_ = models;
+		behavior_.ExternalModels = externalModels_;
+	}
+
 	int GetCurrentLOD() const;
 
 	int32_t GetInstanceCount() const;
 
 	void SetStep(int32_t step);
+
+	void SetGpuTimerEnabled(bool enabled);
 
 	EffectRendererParameter GetParameter() const
 	{
@@ -243,6 +240,40 @@ public:
 		{
 			groundRenderer_->SetExtent(parameter_.GroundExtent);
 			groundRenderer_->GroundHeight = parameter_.GroundHeight;
+		}
+
+		if (manager_ != nullptr)
+		{
+			if (parameter_.IsGroundCollisionEnabled)
+			{
+				const auto groundHeight = parameter_.GroundHeight;
+				manager_->SetCollisionCallback([groundHeight](const ::Effekseer::Vector3D& start, const ::Effekseer::Vector3D& end, ::Effekseer::Vector3D& collisionPosition, ::Effekseer::Vector3D& collisionNormal) -> bool
+											   {
+					const auto diff = end - start;
+					if (diff.Y == 0.0f)
+					{
+						return false;
+					}
+
+					if (!(start.Y >= groundHeight && end.Y < groundHeight))
+					{
+						return false;
+					}
+
+					const auto rate = (groundHeight - start.Y) / diff.Y;
+					if (rate < 0.0f || rate > 1.0f)
+					{
+						return false;
+					}
+
+					collisionPosition = start + diff * rate;
+					collisionNormal = ::Effekseer::Vector3D(0.0f, 1.0f, 0.0f);
+					return true; });
+			}
+			else
+			{
+				manager_->SetCollisionCallback(nullptr);
+			}
 		}
 	}
 
@@ -274,9 +305,9 @@ public:
 		return call;
 	}
 
-	int32_t GetCPUTime();
+	int32_t GetCpuTime();
 
-	int32_t GetGPUTime();
+	int32_t GetGpuTime();
 
 	int32_t RandomSeed = -1;
 	EffectRendererCallback* Callback = nullptr;

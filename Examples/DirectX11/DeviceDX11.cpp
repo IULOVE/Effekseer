@@ -153,13 +153,6 @@ void DeviceDX11::Terminate()
 	CoUninitialize();
 }
 
-void DeviceDX11::ClearScreen()
-{
-	float ClearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
-	dx11Context->ClearRenderTargetView(renderTargetView.Get(), ClearColor);
-	dx11Context->ClearDepthStencilView(depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-}
-
 void DeviceDX11::PresentDevice()
 {
 	swapChain->Present(1, 0);
@@ -178,7 +171,26 @@ bool DeviceDX11::NewFrame()
 	return result;
 }
 
-void DeviceDX11::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
+void DeviceDX11::BeginComputePass()
+{
+}
+
+void DeviceDX11::EndComputePass()
+{
+}
+
+void DeviceDX11::BeginRenderPass()
+{
+	float ClearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+	dx11Context->ClearRenderTargetView(renderTargetView.Get(), ClearColor);
+	dx11Context->ClearDepthStencilView(depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+}
+
+void DeviceDX11::EndRenderPass()
+{
+}
+
+void DeviceDX11::SetupEffekseerModules(::Effekseer::ManagerRef efkManager, bool usingProfiler)
 {
 	// Create a  graphics device
 	// 描画デバイスの作成
@@ -188,6 +200,10 @@ void DeviceDX11::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
 	// Create a renderer of effects
 	// エフェクトのレンダラーの作成
 	efkRenderer = ::EffekseerRendererDX11::Renderer::Create(graphicsDevice, 8000);
+	if (efkRenderer == nullptr)
+	{
+		return;
+	}
 
 	// Sprcify rendering modules
 	// 描画モジュールの設定
@@ -205,4 +221,9 @@ void DeviceDX11::SetupEffekseerModules(::Effekseer::ManagerRef efkManager)
 	efkManager->SetModelLoader(efkRenderer->CreateModelLoader());
 	efkManager->SetMaterialLoader(efkRenderer->CreateMaterialLoader());
 	efkManager->SetCurveLoader(Effekseer::MakeRefPtr<Effekseer::CurveLoader>());
+
+	if (usingProfiler)
+	{
+		efkManager->SetGpuTimer(efkRenderer->CreateGpuTimer());
+	}
 }

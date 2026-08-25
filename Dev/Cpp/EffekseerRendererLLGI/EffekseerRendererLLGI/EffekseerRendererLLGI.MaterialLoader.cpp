@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Effekseer/Material/Effekseer.CompiledMaterial.h"
+#include <limits>
 
 #undef min
 
@@ -66,14 +67,17 @@ MaterialLoader ::~MaterialLoader()
 	// code file
 	{
 		auto binaryPath = std::u16string(path) + u"d";
-		auto reader = fileInterface_->OpenRead(binaryPath.c_str());
+		auto reader = fileInterface_->TryOpenRead(binaryPath.c_str());
 
 		if (reader != nullptr)
 		{
 			size_t size = reader->GetLength();
+			if (size > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+				return nullptr;
 			std::vector<char> data;
 			data.resize(size);
-			reader->Read(data.data(), size);
+			if (reader->Read(data.data(), size) != size)
+				return nullptr;
 
 			auto material = Load(data.data(), (int32_t)size, ::Effekseer::MaterialFileType::Compiled);
 
@@ -92,9 +96,12 @@ MaterialLoader ::~MaterialLoader()
 		if (reader != nullptr)
 		{
 			size_t size = reader->GetLength();
+			if (size > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+				return nullptr;
 			std::vector<char> data;
 			data.resize(size);
-			reader->Read(data.data(), size);
+			if (reader->Read(data.data(), size) != size)
+				return nullptr;
 
 			auto material = Load(data.data(), (int32_t)size, ::Effekseer::MaterialFileType::Code);
 
@@ -330,7 +337,8 @@ MaterialLoader ::~MaterialLoader()
 			return nullptr;
 		}
 
-		if (!compiled.GetHasValue(platformType_))
+		if (!compiled.GetHasValue(platformType_) &&
+			!(platformType_ == ::Effekseer::CompiledMaterialPlatformType::WebGPU && materialCompiler_ != nullptr))
 		{
 			return nullptr;
 		}
@@ -343,7 +351,16 @@ MaterialLoader ::~MaterialLoader()
 			return nullptr;
 		}
 
-		auto binary = compiled.GetBinary(platformType_);
+		auto binary = compiled.GetHasValue(platformType_) ? compiled.GetBinary(platformType_) : nullptr;
+		std::unique_ptr<::Effekseer::CompiledMaterialBinary, ::Effekseer::ReferenceDeleter<::Effekseer::CompiledMaterialBinary>> generatedBinary;
+		if (binary == nullptr && platformType_ == ::Effekseer::CompiledMaterialPlatformType::WebGPU && materialCompiler_ != nullptr)
+		{
+			generatedBinary = ::Effekseer::CreateUniqueReference(materialCompiler_->Compile(&materialFile));
+			if (generatedBinary != nullptr)
+			{
+				binary = generatedBinary.get();
+			}
+		}
 
 		return LoadAcutually(materialFile, binary);
 	}

@@ -19,8 +19,6 @@ private:
 	static const int32_t TextureFilterCount = 2;
 	static const int32_t TextureWrapCount = 2;
 
-	RendererImplemented* m_renderer;
-
 public:
 	RenderState(RendererImplemented* renderer);
 	virtual ~RenderState();

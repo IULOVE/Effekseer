@@ -7,12 +7,13 @@
 //----------------------------------------------------------------------------------
 #include <Effekseer.h>
 #include <assert.h>
+#include <cmath>
 #include <math.h>
 #include <string.h>
 
 #include "EffekseerRenderer.CommonUtils.h"
-#include "EffekseerRenderer.RenderStateBase.h"
 #include "EffekseerRenderer.StandardRenderer.h"
+#include "EffekseerRendererCommon/EffekseerRenderer.RenderStateBase.h"
 
 #define __ZOFFSET__
 
@@ -32,6 +33,81 @@ template <typename RENDERER, bool FLIP_RGB_FLAG>
 class RingRendererBase : public ::Effekseer::RingRenderer, public ::Effekseer::SIMD::AlignedAllocationPolicy<16>
 {
 protected:
+	struct RingRenderState
+	{
+		int32_t singleVertexCount = 0;
+		float invVertexCount = 0.0f;
+
+		float circleAngleDegree = 0.0f;
+		float stepAngleDegree = 0.0f;
+		float stepAngle = 0.0f;
+		float beginAngle = 0.0f;
+
+		float outerRadius = 0.0f;
+		float innerRadius = 0.0f;
+		float centerRadius = 0.0f;
+
+		float outerHeight = 0.0f;
+		float innerHeight = 0.0f;
+		float centerHeight = 0.0f;
+
+		::Effekseer::Color outerColor;
+		::Effekseer::Color innerColor;
+		::Effekseer::Color centerColor;
+
+		float uv0Current = 0.0f;
+		float uv0Step = 0.0f;
+		float uv0v1 = 0.0f;
+		float uv0v2 = 0.0f;
+		float uv0v3 = 0.0f;
+
+		float uv1Current = 0.0f;
+		float uv1Step = 0.0f;
+		float uv1v1 = 0.0f;
+		float uv1v2 = 0.0f;
+		float uv1v3 = 0.0f;
+
+		static const int32_t AdvancedUVNum = 5;
+		float advancedUVCurrent[AdvancedUVNum]{};
+		float advancedUVStep[AdvancedUVNum]{};
+		float advancedUVv1[AdvancedUVNum]{};
+		float advancedUVv2[AdvancedUVNum]{};
+		float advancedUVv3[AdvancedUVNum]{};
+
+		float currentAngleDegree = 0.0f;
+		float fadeStartAngle = 0.0f;
+		float fadeEndingAngle = 0.0f;
+
+		float stepC = 0.0f;
+		float stepS = 0.0f;
+		float cos_ = 0.0f;
+		float sin_ = 0.0f;
+
+		::Effekseer::SIMD::Vec3f outerCurrent{};
+		::Effekseer::SIMD::Vec3f innerCurrent{};
+		::Effekseer::SIMD::Vec3f centerCurrent{};
+
+		ZFixedTransformBlock outerTransform;
+		ZFixedTransformBlock innerTransform;
+		ZFixedTransformBlock centerTransform;
+
+		RingRenderState(const ::Effekseer::SIMD::Mat43f& mat43, float outerHeight_, float innerHeight_, float centerHeight_)
+			: outerTransform(mat43, outerHeight_)
+			, innerTransform(mat43, innerHeight_)
+			, centerTransform(mat43, centerHeight_)
+		{
+		}
+	};
+
+	static inline float SafeAlpha(float alpha)
+	{
+		if (!std::isfinite(alpha))
+		{
+			return 0.0f;
+		}
+		return Effekseer::Clamp(alpha, 1.0f, 0.0f);
+	}
+
 	struct KeyValue
 	{
 		float Key;
@@ -39,13 +115,13 @@ protected:
 	};
 	std::vector<KeyValue> instances_;
 
-	RENDERER* m_renderer;
-	int32_t m_ringBufferOffset;
-	uint8_t* m_ringBufferData;
+	RENDERER* renderer_;
+	int32_t ringBufferOffset_;
+	uint8_t* ringBufferData_;
 
-	int32_t m_spriteCount;
-	int32_t m_instanceCount;
-	::Effekseer::SIMD::Mat44f m_singleRenderingMatrix;
+	int32_t spriteCount_;
+	int32_t instanceCount_;
+	::Effekseer::SIMD::Mat44f singleRenderingMatrix_;
 	::Effekseer::RendererMaterialType materialType_ = ::Effekseer::RendererMaterialType::Default;
 
 	int32_t vertexCount_ = 0;
@@ -55,11 +131,11 @@ protected:
 
 public:
 	RingRendererBase(RENDERER* renderer)
-		: m_renderer(renderer)
-		, m_ringBufferOffset(0)
-		, m_ringBufferData(nullptr)
-		, m_spriteCount(0)
-		, m_instanceCount(0)
+		: renderer_(renderer)
+		, ringBufferOffset_(0)
+		, ringBufferData_(nullptr)
+		, spriteCount_(0)
+		, instanceCount_(0)
 	{
 	}
 
@@ -106,13 +182,13 @@ protected:
 
 	void BeginRendering_(RENDERER* renderer, int32_t count, const efkRingNodeParam& param, void* userData)
 	{
-		m_spriteCount = 0;
+		spriteCount_ = 0;
 		const auto singleVertexCount = param.VertexCount * 8;
 		const auto singleSpriteCount = param.VertexCount * 2;
 
 		count = (std::min)(count, renderer->GetSquareMaxCount() / singleSpriteCount);
 
-		m_instanceCount = count;
+		instanceCount_ = count;
 
 		instances_.clear();
 
@@ -155,7 +231,7 @@ protected:
 		state.LocalTime = param.LocalTime;
 
 		state.CopyMaterialFromParameterToState(
-			m_renderer,
+			renderer_,
 			param.EffectPointer,
 			param.BasicParameterPtr);
 
@@ -164,7 +240,7 @@ protected:
 
 		materialType_ = param.BasicParameterPtr->MaterialType;
 
-		renderer->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, count * singleVertexCount, stride_, (void*&)m_ringBufferData);
+		renderer->GetStandardRenderer()->BeginRenderingAndRenderingIfRequired(state, count * singleVertexCount, stride_, (void*&)ringBufferData_);
 
 		vertexCount_ = count * singleVertexCount;
 	}
@@ -175,13 +251,13 @@ protected:
 	{
 		if (parameter.DepthParameterPtr->ZSort == Effekseer::ZSortType::None)
 		{
-			const auto& state = m_renderer->GetStandardRenderer()->GetState();
+			const auto& state = renderer_->GetStandardRenderer()->GetState();
 
 			RenderingInstance(instanceParameter, parameter, state, camera);
 		}
 		else
 		{
-			if (instances_.size() >= m_instanceCount)
+			if (instances_.size() >= instanceCount_)
 			{
 				return;
 			}
@@ -199,6 +275,29 @@ protected:
 	{
 		::Effekseer::SIMD::Mat43f mat43{};
 
+		PrepareMatrix(parameter, instanceParameter, camera, mat43);
+
+		auto state = InitializeRingState(parameter, instanceParameter, mat43);
+
+		RenderRingVertices<VERTEX, FLIP_RGB>(parameter, instanceParameter, state);
+
+		WriteCustomData(instanceParameter, state.singleVertexCount);
+
+		spriteCount_ += 2 * parameter.VertexCount;
+		ringBufferData_ += stride_ * state.singleVertexCount;
+	}
+
+	void PrepareMatrix(const efkRingNodeParam& parameter,
+					   const efkRingInstanceParam& instanceParameter,
+					   const ::Effekseer::SIMD::Mat44f& camera,
+					   ::Effekseer::SIMD::Mat43f& mat43)
+	{
+		const auto cameraForRendering = TransformCameraMatrixToEffectSpace(camera, parameter.RenderingCoordinateTransform);
+		const auto cameraFrontForRendering = TransformCameraFrontToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraFrontDirection()), parameter.RenderingCoordinateTransform);
+		const auto cameraPositionForRendering = TransformCameraPositionToEffectSpace(
+			::Effekseer::SIMD::Vec3f(renderer_->GetCameraPosition()), parameter.RenderingCoordinateTransform);
+
 		if (parameter.Billboard != ::Effekseer::BillboardType::Fixed)
 		{
 			Effekseer::SIMD::Vec3f s;
@@ -209,18 +308,18 @@ protected:
 			{
 				Effekseer::SIMD::Mat43f instMat = instanceParameter.SRTMatrix43;
 
-				ApplyViewOffset(instMat, camera, instanceParameter.ViewOffsetDistance);
+				ApplyViewOffset(instMat, cameraForRendering, instanceParameter.ViewOffsetDistance);
 
-				CalcBillboard(parameter.Billboard, mat43, s, R, F, instMat, m_renderer->GetCameraFrontDirection(), instanceParameter.Direction);
+				CalcBillboard(parameter.Billboard, mat43, s, R, F, instMat, cameraFrontForRendering, instanceParameter.Direction);
 			}
 			else
 			{
-				CalcBillboard(parameter.Billboard, mat43, s, R, F, instanceParameter.SRTMatrix43, m_renderer->GetCameraFrontDirection(), instanceParameter.Direction);
+				CalcBillboard(parameter.Billboard, mat43, s, R, F, instanceParameter.SRTMatrix43, cameraFrontForRendering, instanceParameter.Direction);
 			}
 
 			ApplyDepthParameters(mat43,
-								 m_renderer->GetCameraFrontDirection(),
-								 m_renderer->GetCameraPosition(),
+								 cameraFrontForRendering,
+								 cameraPositionForRendering,
 								 s,
 								 parameter.DepthParameterPtr,
 								 parameter.IsRightHand);
@@ -233,22 +332,27 @@ protected:
 
 			if (parameter.EnableViewOffset)
 			{
-				ApplyViewOffset(mat43, camera, instanceParameter.ViewOffsetDistance);
+				ApplyViewOffset(mat43, cameraForRendering, instanceParameter.ViewOffsetDistance);
 			}
 
 			ApplyDepthParameters(mat43,
-								 m_renderer->GetCameraFrontDirection(),
-								 m_renderer->GetCameraPosition(),
+								 cameraFrontForRendering,
+								 cameraPositionForRendering,
 								 parameter.DepthParameterPtr,
 								 parameter.IsRightHand);
 		}
+	}
 
-		int32_t singleVertexCount = parameter.VertexCount * 8;
-		// Vertex* verteies = (Vertex*)m_renderer->GetVertexBuffer()->GetBufferDirect( sizeof(Vertex) * vertexCount );
+	RingRenderState InitializeRingState(const efkRingNodeParam& parameter,
+										const efkRingInstanceParam& instanceParameter,
+										const ::Effekseer::SIMD::Mat43f& mat43)
+	{
+		const int32_t singleVertexCount = parameter.VertexCount * 8;
+		const float vertexCount = Effekseer::AvoidZero(static_cast<float>(parameter.VertexCount));
+		const float invVertexCount = 1.0f / vertexCount;
 
-		StrideView<VERTEX> verteies(m_ringBufferData, stride_, singleVertexCount);
 		const float circleAngleDegree = (instanceParameter.ViewingAngleEnd - instanceParameter.ViewingAngleStart);
-		const float stepAngleDegree = circleAngleDegree / (parameter.VertexCount);
+		const float stepAngleDegree = circleAngleDegree * invVertexCount;
 		const float stepAngle = (stepAngleDegree) / 180.0f * 3.141592f;
 		const float beginAngle = (instanceParameter.ViewingAngleStart + 90) / 180.0f * 3.141592f;
 
@@ -260,127 +364,149 @@ protected:
 		const float innerHeight = instanceParameter.InnerLocation.GetY();
 		const float centerHeight = innerHeight + (outerHeight - innerHeight) * instanceParameter.CenterRatio;
 
-		::Effekseer::Color outerColor = instanceParameter.OuterColor;
-		::Effekseer::Color innerColor = instanceParameter.InnerColor;
-		::Effekseer::Color centerColor = instanceParameter.CenterColor;
+		RingRenderState state(mat43, outerHeight, innerHeight, centerHeight);
+
+		state.singleVertexCount = singleVertexCount;
+		state.invVertexCount = invVertexCount;
+		state.circleAngleDegree = circleAngleDegree;
+		state.stepAngleDegree = stepAngleDegree;
+		state.stepAngle = stepAngle;
+		state.beginAngle = beginAngle;
+
+		state.outerRadius = outerRadius;
+		state.innerRadius = innerRadius;
+		state.centerRadius = centerRadius;
+
+		state.outerHeight = outerHeight;
+		state.innerHeight = innerHeight;
+		state.centerHeight = centerHeight;
+
+		state.outerColor = instanceParameter.OuterColor;
+		state.innerColor = instanceParameter.InnerColor;
+		state.centerColor = instanceParameter.CenterColor;
+
+		if (parameter.StartingFade > 0)
+		{
+			state.outerColor.A = 0;
+			state.innerColor.A = 0;
+			state.centerColor.A = 0;
+		}
+
+		state.stepC = cosf(stepAngle);
+		state.stepS = sinf(stepAngle);
+		state.cos_ = cosf(beginAngle);
+		state.sin_ = sinf(beginAngle);
+
+		state.uv0Current = instanceParameter.UV.X;
+		state.uv0Step = instanceParameter.UV.Width * invVertexCount;
+		state.uv0v1 = instanceParameter.UV.Y;
+		state.uv0v2 = state.uv0v1 + instanceParameter.UV.Height * 0.5f;
+		state.uv0v3 = state.uv0v1 + instanceParameter.UV.Height;
+
+		state.uv1Current = 0.0f;
+		state.uv1Step = invVertexCount;
+		state.uv1v1 = 0.0f;
+		state.uv1v2 = state.uv1v1 + 0.5f;
+		state.uv1v3 = state.uv1v1 + 1.0f;
+
+		state.advancedUVCurrent[0] = instanceParameter.AlphaUV.X;
+		state.advancedUVCurrent[1] = instanceParameter.UVDistortionUV.X;
+		state.advancedUVCurrent[2] = instanceParameter.BlendUV.X;
+		state.advancedUVCurrent[3] = instanceParameter.BlendAlphaUV.X;
+		state.advancedUVCurrent[4] = instanceParameter.BlendUVDistortionUV.X;
+
+		state.advancedUVStep[0] = instanceParameter.AlphaUV.Width * invVertexCount;
+		state.advancedUVStep[1] = instanceParameter.UVDistortionUV.Width * invVertexCount;
+		state.advancedUVStep[2] = instanceParameter.BlendUV.Width * invVertexCount;
+		state.advancedUVStep[3] = instanceParameter.BlendAlphaUV.Width * invVertexCount;
+		state.advancedUVStep[4] = instanceParameter.BlendUVDistortionUV.Width * invVertexCount;
+
+		state.advancedUVv1[0] = instanceParameter.AlphaUV.Y;
+		state.advancedUVv1[1] = instanceParameter.UVDistortionUV.Y;
+		state.advancedUVv1[2] = instanceParameter.BlendUV.Y;
+		state.advancedUVv1[3] = instanceParameter.BlendAlphaUV.Y;
+		state.advancedUVv1[4] = instanceParameter.BlendUVDistortionUV.Y;
+
+		state.advancedUVv2[0] = state.advancedUVv1[0] + instanceParameter.AlphaUV.Height * 0.5f;
+		state.advancedUVv2[1] = state.advancedUVv1[1] + instanceParameter.UVDistortionUV.Height * 0.5f;
+		state.advancedUVv2[2] = state.advancedUVv1[2] + instanceParameter.BlendUV.Height * 0.5f;
+		state.advancedUVv2[3] = state.advancedUVv1[3] + instanceParameter.BlendAlphaUV.Height * 0.5f;
+		state.advancedUVv2[4] = state.advancedUVv1[4] + instanceParameter.BlendUVDistortionUV.Height * 0.5f;
+
+		state.advancedUVv3[0] = state.advancedUVv1[0] + instanceParameter.AlphaUV.Height;
+		state.advancedUVv3[1] = state.advancedUVv1[1] + instanceParameter.UVDistortionUV.Height;
+		state.advancedUVv3[2] = state.advancedUVv1[2] + instanceParameter.BlendUV.Height;
+		state.advancedUVv3[3] = state.advancedUVv1[3] + instanceParameter.BlendAlphaUV.Height;
+		state.advancedUVv3[4] = state.advancedUVv1[4] + instanceParameter.BlendUVDistortionUV.Height;
+
+		state.fadeStartAngle = Effekseer::AvoidZero(parameter.StartingFade);
+		state.fadeEndingAngle = Effekseer::AvoidZero(parameter.EndingFade);
+
+		state.outerCurrent = ::Effekseer::SIMD::Vec3f(state.cos_ * state.outerRadius, state.sin_ * state.outerRadius, 0.0f);
+		state.innerCurrent = ::Effekseer::SIMD::Vec3f(state.cos_ * state.innerRadius, state.sin_ * state.innerRadius, 0.0f);
+		state.centerCurrent = ::Effekseer::SIMD::Vec3f(state.cos_ * state.centerRadius, state.sin_ * state.centerRadius, 0.0f);
+
+		state.outerTransform.Transform(state.outerCurrent);
+		state.innerTransform.Transform(state.innerCurrent);
+		state.centerTransform.Transform(state.centerCurrent);
+
+		return state;
+	}
+
+	template <typename VERTEX, bool FLIP_RGB>
+	void RenderRingVertices(const efkRingNodeParam& parameter,
+							const efkRingInstanceParam& instanceParameter,
+							RingRenderState& state)
+	{
+		StrideView<VERTEX> verteies(ringBufferData_, stride_, state.singleVertexCount);
+
+		::Effekseer::Color outerColor = state.outerColor;
+		::Effekseer::Color innerColor = state.innerColor;
+		::Effekseer::Color centerColor = state.centerColor;
+
 		::Effekseer::Color outerColorNext = instanceParameter.OuterColor;
 		::Effekseer::Color innerColorNext = instanceParameter.InnerColor;
 		::Effekseer::Color centerColorNext = instanceParameter.CenterColor;
 
-		if (parameter.StartingFade > 0)
-		{
-			outerColor.A = 0;
-			innerColor.A = 0;
-			centerColor.A = 0;
-		}
-
-		const float stepC = cosf(stepAngle);
-		const float stepS = sinf(stepAngle);
-		float cos_ = cosf(beginAngle);
-		float sin_ = sinf(beginAngle);
-
-		float uv0Current = instanceParameter.UV.X;
-		const float uv0Step = instanceParameter.UV.Width / parameter.VertexCount;
-		const float uv0v1 = instanceParameter.UV.Y;
-		const float uv0v2 = uv0v1 + instanceParameter.UV.Height * 0.5f;
-		const float uv0v3 = uv0v1 + instanceParameter.UV.Height;
 		float uv0texNext = 0.0f;
-
-		float uv1Current = 0.0f;
-		const float uv1Step = 1.0f / parameter.VertexCount;
-		const float uv1v1 = 0.0f;
-		const float uv1v2 = uv1v1 + 0.5f;
-		const float uv1v3 = uv1v1 + 1.0f;
 		float uv1texNext = 0.0f;
-
-		const int32_t advancedUVNum = 5;
-
-		float advancedUVCurrent[advancedUVNum] =
-			{
-				instanceParameter.AlphaUV.X,
-				instanceParameter.UVDistortionUV.X,
-				instanceParameter.BlendUV.X,
-				instanceParameter.BlendAlphaUV.X,
-				instanceParameter.BlendUVDistortionUV.X};
-		const float advancedUVStep[advancedUVNum] =
-			{
-				instanceParameter.AlphaUV.Width / parameter.VertexCount,
-				instanceParameter.UVDistortionUV.Width / parameter.VertexCount,
-				instanceParameter.BlendUV.Width / parameter.VertexCount,
-				instanceParameter.BlendAlphaUV.Width / parameter.VertexCount,
-				instanceParameter.BlendUVDistortionUV.Width / parameter.VertexCount};
-		const float advancedUVv1[advancedUVNum] =
-			{
-				instanceParameter.AlphaUV.Y,
-				instanceParameter.UVDistortionUV.Y,
-				instanceParameter.BlendUV.Y,
-				instanceParameter.BlendAlphaUV.Y,
-				instanceParameter.BlendUVDistortionUV.Y};
-		const float advancedUVv2[advancedUVNum] =
-			{
-				advancedUVv1[0] + instanceParameter.AlphaUV.Height * 0.5f,
-				advancedUVv1[1] + instanceParameter.UVDistortionUV.Height * 0.5f,
-				advancedUVv1[2] + instanceParameter.BlendUV.Height * 0.5f,
-				advancedUVv1[3] + instanceParameter.BlendAlphaUV.Height * 0.5f,
-				advancedUVv1[4] + instanceParameter.BlendUVDistortionUV.Height * 0.5f};
-		const float advancedUVv3[advancedUVNum] =
-			{
-				advancedUVv1[0] + instanceParameter.AlphaUV.Height,
-				advancedUVv1[1] + instanceParameter.UVDistortionUV.Height,
-				advancedUVv1[2] + instanceParameter.BlendUV.Height,
-				advancedUVv1[3] + instanceParameter.BlendAlphaUV.Height,
-				advancedUVv1[4] + instanceParameter.BlendUVDistortionUV.Height};
-		float advancedUVtexNext[advancedUVNum] = {0.0f};
+		float advancedUVtexNext[RingRenderState::AdvancedUVNum] = {0.0f};
 
 		::Effekseer::SIMD::Vec3f outerNext, innerNext, centerNext;
 
-		float currentAngleDegree = 0;
-		float fadeStartAngle = parameter.StartingFade;
-		float fadeEndingAngle = parameter.EndingFade;
-
-		::Effekseer::SIMD::Vec3f outerCurrent(cos_ * outerRadius, sin_ * outerRadius, 0.0f);
-		::Effekseer::SIMD::Vec3f innerCurrent(cos_ * innerRadius, sin_ * innerRadius, 0.0f);
-		::Effekseer::SIMD::Vec3f centerCurrent(cos_ * centerRadius, sin_ * centerRadius, 0.0f);
-
-		ZFixedTransformBlock outerTransform(mat43, outerHeight);
-		ZFixedTransformBlock innerTransform(mat43, innerHeight);
-		ZFixedTransformBlock centerTransform(mat43, centerHeight);
-
-		outerTransform.Transform(outerCurrent);
-		innerTransform.Transform(innerCurrent);
-		centerTransform.Transform(centerCurrent);
-
-		for (int i = 0; i < singleVertexCount; i += 8)
+		for (int i = 0; i < state.singleVertexCount; i += 8)
 		{
-			float old_c = cos_;
-			float old_s = sin_;
+			float old_c = state.cos_;
+			float old_s = state.sin_;
 
 			float t;
-			t = cos_ * stepC - sin_ * stepS;
-			sin_ = sin_ * stepC + cos_ * stepS;
-			cos_ = t;
+			t = state.cos_ * state.stepC - state.sin_ * state.stepS;
+			state.sin_ = state.sin_ * state.stepC + state.cos_ * state.stepS;
+			state.cos_ = t;
 
-			outerNext = ::Effekseer::SIMD::Vec3f{cos_ * outerRadius, sin_ * outerRadius, 0};
-			innerNext = ::Effekseer::SIMD::Vec3f{cos_ * innerRadius, sin_ * innerRadius, 0};
-			centerNext = ::Effekseer::SIMD::Vec3f{cos_ * centerRadius, sin_ * centerRadius, 0};
+			outerNext = ::Effekseer::SIMD::Vec3f{state.cos_ * state.outerRadius, state.sin_ * state.outerRadius, 0};
+			innerNext = ::Effekseer::SIMD::Vec3f{state.cos_ * state.innerRadius, state.sin_ * state.innerRadius, 0};
+			centerNext = ::Effekseer::SIMD::Vec3f{state.cos_ * state.centerRadius, state.sin_ * state.centerRadius, 0};
 
-			outerTransform.Transform(outerNext);
-			innerTransform.Transform(innerNext);
-			centerTransform.Transform(centerNext);
+			state.outerTransform.Transform(outerNext);
+			state.innerTransform.Transform(innerNext);
+			state.centerTransform.Transform(centerNext);
 
-			currentAngleDegree += stepAngleDegree;
+			state.currentAngleDegree += state.stepAngleDegree;
 
 			// for floating decimal point error
-			currentAngleDegree = Effekseer::Min(currentAngleDegree, circleAngleDegree);
+			state.currentAngleDegree = Effekseer::Min(state.currentAngleDegree, state.circleAngleDegree);
 			float alpha = 1.0f;
-			if (currentAngleDegree < fadeStartAngle)
+			if (state.currentAngleDegree < state.fadeStartAngle)
 			{
-				alpha = currentAngleDegree / fadeStartAngle;
+				alpha = state.currentAngleDegree / state.fadeStartAngle;
 			}
-			else if (currentAngleDegree > circleAngleDegree - fadeEndingAngle)
+			else if (state.currentAngleDegree > state.circleAngleDegree - state.fadeEndingAngle)
 			{
-				alpha = 1.0f - (currentAngleDegree - (circleAngleDegree - fadeEndingAngle)) / fadeEndingAngle;
+				alpha = 1.0f - (state.currentAngleDegree - (state.circleAngleDegree - state.fadeEndingAngle)) / state.fadeEndingAngle;
 			}
+
+			alpha = SafeAlpha(alpha);
 
 			outerColorNext = instanceParameter.OuterColor;
 			innerColorNext = instanceParameter.InnerColor;
@@ -393,146 +519,152 @@ protected:
 				centerColorNext.A = static_cast<uint8_t>(centerColorNext.A * alpha);
 			}
 
-			uv0texNext = uv0Current + uv0Step;
+			uv0texNext = state.uv0Current + state.uv0Step;
 
 			StrideView<VERTEX> v(&verteies[i], stride_, 8);
-			v[0].Pos = ToStruct(outerCurrent);
+			v[0].Pos = ToStruct(state.outerCurrent);
 			v[0].SetColor(outerColor, FLIP_RGB);
-			v[0].UV[0] = uv0Current;
-			v[0].UV[1] = uv0v1;
+			v[0].UV[0] = state.uv0Current;
+			v[0].UV[1] = state.uv0v1;
 
-			v[1].Pos = ToStruct(centerCurrent);
+			v[1].Pos = ToStruct(state.centerCurrent);
 			v[1].SetColor(centerColor, FLIP_RGB);
-			v[1].UV[0] = uv0Current;
-			v[1].UV[1] = uv0v2;
+			v[1].UV[0] = state.uv0Current;
+			v[1].UV[1] = state.uv0v2;
 
 			v[2].Pos = ToStruct(outerNext);
 			v[2].SetColor(outerColorNext, FLIP_RGB);
 			v[2].UV[0] = uv0texNext;
-			v[2].UV[1] = uv0v1;
+			v[2].UV[1] = state.uv0v1;
 
 			v[3].Pos = ToStruct(centerNext);
 			v[3].SetColor(centerColorNext, FLIP_RGB);
 			v[3].UV[0] = uv0texNext;
-			v[3].UV[1] = uv0v2;
+			v[3].UV[1] = state.uv0v2;
 
 			v[4] = v[1];
 
-			v[5].Pos = ToStruct(innerCurrent);
+			v[5].Pos = ToStruct(state.innerCurrent);
 			v[5].SetColor(innerColor, FLIP_RGB);
-			v[5].UV[0] = uv0Current;
-			v[5].UV[1] = uv0v3;
+			v[5].UV[0] = state.uv0Current;
+			v[5].UV[1] = state.uv0v3;
 
 			v[6] = v[3];
 
 			v[7].Pos = ToStruct(innerNext);
 			v[7].SetColor(innerColorNext, FLIP_RGB);
 			v[7].UV[0] = uv0texNext;
-			v[7].UV[1] = uv0v3;
+			v[7].UV[1] = state.uv0v3;
 
-			for (int32_t uvi = 0; uvi < advancedUVNum; uvi++)
+			for (int32_t uvi = 0; uvi < RingRenderState::AdvancedUVNum; uvi++)
 			{
-				advancedUVtexNext[uvi] = advancedUVCurrent[uvi] + advancedUVStep[uvi];
+				advancedUVtexNext[uvi] = state.advancedUVCurrent[uvi] + state.advancedUVStep[uvi];
 			}
 
-			SetVertexAlphaUV(v[0], advancedUVCurrent[0], 0);
-			SetVertexAlphaUV(v[0], advancedUVv1[0], 1);
+			SetVertexAlphaUV(v[0], state.advancedUVCurrent[0], 0);
+			SetVertexAlphaUV(v[0], state.advancedUVv1[0], 1);
 
-			SetVertexUVDistortionUV(v[0], advancedUVCurrent[1], 0);
-			SetVertexUVDistortionUV(v[0], advancedUVv1[1], 1);
+			SetVertexUVDistortionUV(v[0], state.advancedUVCurrent[1], 0);
+			SetVertexUVDistortionUV(v[0], state.advancedUVv1[1], 1);
 
-			SetVertexBlendUV(v[0], advancedUVCurrent[2], 0);
-			SetVertexBlendUV(v[0], advancedUVv1[2], 1);
+			SetVertexBlendUV(v[0], state.advancedUVCurrent[2], 0);
+			SetVertexBlendUV(v[0], state.advancedUVv1[2], 1);
 
-			SetVertexBlendAlphaUV(v[0], advancedUVCurrent[3], 0);
-			SetVertexBlendAlphaUV(v[0], advancedUVv1[3], 1);
+			SetVertexBlendAlphaUV(v[0], state.advancedUVCurrent[3], 0);
+			SetVertexBlendAlphaUV(v[0], state.advancedUVv1[3], 1);
 
-			SetVertexBlendUVDistortionUV(v[0], advancedUVCurrent[4], 0);
-			SetVertexBlendUVDistortionUV(v[0], advancedUVv1[4], 1);
+			SetVertexBlendUVDistortionUV(v[0], state.advancedUVCurrent[4], 0);
+			SetVertexBlendUVDistortionUV(v[0], state.advancedUVv1[4], 1);
 
-			SetVertexAlphaUV(v[1], advancedUVCurrent[0], 0);
-			SetVertexAlphaUV(v[1], advancedUVv2[0], 1);
+			SetVertexAlphaUV(v[1], state.advancedUVCurrent[0], 0);
+			SetVertexAlphaUV(v[1], state.advancedUVv2[0], 1);
 
-			SetVertexUVDistortionUV(v[1], advancedUVCurrent[1], 0);
-			SetVertexUVDistortionUV(v[1], advancedUVv2[1], 1);
+			SetVertexUVDistortionUV(v[1], state.advancedUVCurrent[1], 0);
+			SetVertexUVDistortionUV(v[1], state.advancedUVv2[1], 1);
 
-			SetVertexBlendUV(v[1], advancedUVCurrent[2], 0);
-			SetVertexBlendUV(v[1], advancedUVv2[2], 1);
+			SetVertexBlendUV(v[1], state.advancedUVCurrent[2], 0);
+			SetVertexBlendUV(v[1], state.advancedUVv2[2], 1);
 
-			SetVertexBlendAlphaUV(v[1], advancedUVCurrent[3], 0);
-			SetVertexBlendAlphaUV(v[1], advancedUVv2[3], 1);
+			SetVertexBlendAlphaUV(v[1], state.advancedUVCurrent[3], 0);
+			SetVertexBlendAlphaUV(v[1], state.advancedUVv2[3], 1);
 
-			SetVertexBlendUVDistortionUV(v[1], advancedUVCurrent[4], 0);
-			SetVertexBlendUVDistortionUV(v[1], advancedUVv2[4], 1);
+			SetVertexBlendUVDistortionUV(v[1], state.advancedUVCurrent[4], 0);
+			SetVertexBlendUVDistortionUV(v[1], state.advancedUVv2[4], 1);
 
 			SetVertexAlphaUV(v[2], advancedUVtexNext[0], 0);
-			SetVertexAlphaUV(v[2], advancedUVv1[0], 1);
+			SetVertexAlphaUV(v[2], state.advancedUVv1[0], 1);
 
 			SetVertexUVDistortionUV(v[2], advancedUVtexNext[1], 0);
-			SetVertexUVDistortionUV(v[2], advancedUVv1[1], 1);
+			SetVertexUVDistortionUV(v[2], state.advancedUVv1[1], 1);
 
 			SetVertexBlendUV(v[2], advancedUVtexNext[2], 0);
-			SetVertexBlendUV(v[2], advancedUVv1[2], 1);
+			SetVertexBlendUV(v[2], state.advancedUVv1[2], 1);
 
 			SetVertexBlendAlphaUV(v[2], advancedUVtexNext[3], 0);
-			SetVertexBlendAlphaUV(v[2], advancedUVv1[3], 1);
+			SetVertexBlendAlphaUV(v[2], state.advancedUVv1[3], 1);
 
 			SetVertexBlendUVDistortionUV(v[2], advancedUVtexNext[4], 0);
-			SetVertexBlendUVDistortionUV(v[2], advancedUVv1[4], 1);
+			SetVertexBlendUVDistortionUV(v[2], state.advancedUVv1[4], 1);
 
 			SetVertexAlphaUV(v[3], advancedUVtexNext[0], 0);
-			SetVertexAlphaUV(v[3], advancedUVv2[0], 1);
+			SetVertexAlphaUV(v[3], state.advancedUVv2[0], 1);
 
 			SetVertexUVDistortionUV(v[3], advancedUVtexNext[1], 0);
-			SetVertexUVDistortionUV(v[3], advancedUVv2[1], 1);
+			SetVertexUVDistortionUV(v[3], state.advancedUVv2[1], 1);
 
 			SetVertexBlendUV(v[3], advancedUVtexNext[2], 0);
-			SetVertexBlendUV(v[3], advancedUVv2[2], 1);
+			SetVertexBlendUV(v[3], state.advancedUVv2[2], 1);
 
 			SetVertexBlendAlphaUV(v[3], advancedUVtexNext[3], 0);
-			SetVertexBlendAlphaUV(v[3], advancedUVv2[3], 1);
+			SetVertexBlendAlphaUV(v[3], state.advancedUVv2[3], 1);
 
 			SetVertexBlendUVDistortionUV(v[3], advancedUVtexNext[4], 0);
-			SetVertexBlendUVDistortionUV(v[3], advancedUVv2[4], 1);
+			SetVertexBlendUVDistortionUV(v[3], state.advancedUVv2[4], 1);
 
 			v[4] = v[1];
 
-			SetVertexAlphaUV(v[5], advancedUVCurrent[0], 0);
-			SetVertexAlphaUV(v[5], advancedUVv3[0], 1);
+			SetVertexAlphaUV(v[5], state.advancedUVCurrent[0], 0);
+			SetVertexAlphaUV(v[5], state.advancedUVv3[0], 1);
 
-			SetVertexUVDistortionUV(v[5], advancedUVCurrent[1], 0);
-			SetVertexUVDistortionUV(v[5], advancedUVv3[1], 1);
+			SetVertexUVDistortionUV(v[5], state.advancedUVCurrent[1], 0);
+			SetVertexUVDistortionUV(v[5], state.advancedUVv3[1], 1);
 
-			SetVertexBlendUV(v[5], advancedUVCurrent[2], 0);
-			SetVertexBlendUV(v[5], advancedUVv3[2], 1);
+			SetVertexBlendUV(v[5], state.advancedUVCurrent[2], 0);
+			SetVertexBlendUV(v[5], state.advancedUVv3[2], 1);
 
-			SetVertexBlendAlphaUV(v[5], advancedUVCurrent[3], 0);
-			SetVertexBlendAlphaUV(v[5], advancedUVv3[3], 1);
+			SetVertexBlendAlphaUV(v[5], state.advancedUVCurrent[3], 0);
+			SetVertexBlendAlphaUV(v[5], state.advancedUVv3[3], 1);
 
-			SetVertexBlendUVDistortionUV(v[5], advancedUVCurrent[4], 0);
-			SetVertexBlendUVDistortionUV(v[5], advancedUVv3[4], 1);
+			SetVertexBlendUVDistortionUV(v[5], state.advancedUVCurrent[4], 0);
+			SetVertexBlendUVDistortionUV(v[5], state.advancedUVv3[4], 1);
 
 			v[6] = v[3];
 
 			SetVertexAlphaUV(v[7], advancedUVtexNext[0], 0);
-			SetVertexAlphaUV(v[7], advancedUVv3[0], 1);
+			SetVertexAlphaUV(v[7], state.advancedUVv3[0], 1);
 
 			SetVertexUVDistortionUV(v[7], advancedUVtexNext[1], 0);
-			SetVertexUVDistortionUV(v[7], advancedUVv3[1], 1);
+			SetVertexUVDistortionUV(v[7], state.advancedUVv3[1], 1);
 
 			SetVertexBlendUV(v[7], advancedUVtexNext[2], 0);
-			SetVertexBlendUV(v[7], advancedUVv3[2], 1);
+			SetVertexBlendUV(v[7], state.advancedUVv3[2], 1);
 
 			SetVertexBlendAlphaUV(v[7], advancedUVtexNext[3], 0);
-			SetVertexBlendAlphaUV(v[7], advancedUVv3[3], 1);
+			SetVertexBlendAlphaUV(v[7], state.advancedUVv3[3], 1);
 
 			SetVertexBlendUVDistortionUV(v[7], advancedUVtexNext[4], 0);
-			SetVertexBlendUVDistortionUV(v[7], advancedUVv3[4], 1);
+			SetVertexBlendUVDistortionUV(v[7], state.advancedUVv3[4], 1);
 
 			for (int32_t vi = 0; vi < 8; vi++)
 			{
 				v[vi].SetFlipbookIndexAndNextRate(instanceParameter.FlipbookIndexAndNextRate);
 				v[vi].SetAlphaThreshold(instanceParameter.AlphaThreshold);
+				v[vi].SetParticleTime(instanceParameter.ParticleTimes[0], instanceParameter.ParticleTimes[1]);
+			}
+
+			if (parameter.RenderingTransform.IsEnabled)
+			{
+				TransformVertexes(v, 8, parameter.RenderingTransform.Transform);
 			}
 
 			if (VertexNormalRequired<VERTEX>())
@@ -541,27 +673,32 @@ protected:
 
 				// return back
 				float t_b;
-				t_b = old_c * (stepC)-old_s * (-stepS);
-				auto s_b = old_s * (stepC) + old_c * (-stepS);
+				t_b = old_c * (state.stepC)-old_s * (-state.stepS);
+				auto s_b = old_s * (state.stepC) + old_c * (-state.stepS);
 				auto c_b = t_b;
 
-				::Effekseer::SIMD::Vec3f outerBefore{c_b * outerRadius, s_b * outerRadius, 0.0f};
-				outerTransform.Transform(outerBefore);
+				::Effekseer::SIMD::Vec3f outerBefore{c_b * state.outerRadius, s_b * state.outerRadius, 0.0f};
+				state.outerTransform.Transform(outerBefore);
 
 				// next
-				auto t_n = cos_ * stepC - sin_ * stepS;
-				auto s_n = sin_ * stepC + cos_ * stepS;
+				auto t_n = state.cos_ * state.stepC - state.sin_ * state.stepS;
+				auto s_n = state.sin_ * state.stepC + state.cos_ * state.stepS;
 				auto c_n = t_n;
 
-				::Effekseer::SIMD::Vec3f outerNN{c_n * outerRadius, s_n * outerRadius, 0.0f};
-				outerTransform.Transform(outerNN);
+				::Effekseer::SIMD::Vec3f outerNN{c_n * state.outerRadius, s_n * state.outerRadius, 0.0f};
+				state.outerTransform.Transform(outerNN);
 
-				::Effekseer::SIMD::Vec3f tangent0 = (outerCurrent - outerBefore).GetNormal();
-				::Effekseer::SIMD::Vec3f tangent1 = (outerNext - outerCurrent).GetNormal();
+				::Effekseer::SIMD::Vec3f tangent0 = (state.outerCurrent - outerBefore).GetNormal();
+				::Effekseer::SIMD::Vec3f tangent1 = (outerNext - state.outerCurrent).GetNormal();
 				::Effekseer::SIMD::Vec3f tangent2 = (outerNN - outerNext).GetNormal();
 
 				auto tangentCurrent = (tangent0 + tangent1) / 2.0f;
 				auto tangentNext = (tangent1 + tangent2) / 2.0f;
+				if (parameter.RenderingTransform.IsEnabled)
+				{
+					tangentCurrent = TransformDirection(tangentCurrent, parameter.RenderingTransform.Transform);
+					tangentNext = TransformDirection(tangentNext, parameter.RenderingTransform.Transform);
+				}
 
 				auto binormalCurrent = v[5].Pos - v[0].Pos;
 				auto binormalNext = v[7].Pos - v[2].Pos;
@@ -577,6 +714,11 @@ protected:
 					normalCurrent = -normalCurrent;
 					normalNext = -normalNext;
 				}
+				if (parameter.RenderingTransform.ReversesWinding)
+				{
+					normalCurrent = -normalCurrent;
+					normalNext = -normalNext;
+				}
 
 				normalCurrent = normalCurrent.GetNormal();
 				normalNext = normalNext.GetNormal();
@@ -586,8 +728,8 @@ protected:
 
 				const auto packedNormalCurrent = PackVector3DF(normalCurrent);
 				const auto packedNormalNext = PackVector3DF(normalNext);
-				const auto packedTangentCurrent = PackVector3DF(tangentCurrent);
-				const auto packedTangentNext = PackVector3DF(tangentNext);
+				const auto packedTangentCurrent = PackTangent(tangentCurrent, parameter.RenderingTransform.ReversesWinding);
+				const auto packedTangentNext = PackTangent(tangentNext, parameter.RenderingTransform.ReversesWinding);
 
 				vs[0].SetPackedNormal(packedNormalCurrent, FLIP_RGB);
 				vs[1].SetPackedNormal(packedNormalCurrent, FLIP_RGB);
@@ -610,41 +752,44 @@ protected:
 				vs[7].SetPackedTangent(packedTangentNext, FLIP_RGB);
 
 				// uv1
-				uv1texNext = uv1Current + uv1Step;
+				uv1texNext = state.uv1Current + state.uv1Step;
 
-				vs[0].SetUV2(uv1Current, uv1v1);
-				vs[1].SetUV2(uv1Current, uv1v2);
-				vs[2].SetUV2(uv1texNext, uv1v1);
-				vs[3].SetUV2(uv1texNext, uv1v2);
+				vs[0].SetUV2(state.uv1Current, state.uv1v1);
+				vs[1].SetUV2(state.uv1Current, state.uv1v2);
+				vs[2].SetUV2(uv1texNext, state.uv1v1);
+				vs[3].SetUV2(uv1texNext, state.uv1v2);
 
-				vs[4].SetUV2(uv1Current, uv1v2);
+				vs[4].SetUV2(state.uv1Current, state.uv1v2);
 
-				vs[5].SetUV2(uv1Current, uv1v3);
+				vs[5].SetUV2(state.uv1Current, state.uv1v3);
 
-				vs[6].SetUV2(uv1texNext, uv1v2);
+				vs[6].SetUV2(uv1texNext, state.uv1v2);
 
-				vs[7].SetUV2(uv1texNext, uv1v3);
+				vs[7].SetUV2(uv1texNext, state.uv1v3);
 			}
 
-			outerCurrent = outerNext;
-			innerCurrent = innerNext;
-			centerCurrent = centerNext;
-			uv0Current = uv0texNext;
-			uv1Current = uv1texNext;
-			for (int32_t uvi = 0; uvi < advancedUVNum; uvi++)
+			state.outerCurrent = outerNext;
+			state.innerCurrent = innerNext;
+			state.centerCurrent = centerNext;
+			state.uv0Current = uv0texNext;
+			state.uv1Current = uv1texNext;
+			for (int32_t uvi = 0; uvi < RingRenderState::AdvancedUVNum; uvi++)
 			{
-				advancedUVCurrent[uvi] = advancedUVtexNext[uvi];
+				state.advancedUVCurrent[uvi] = advancedUVtexNext[uvi];
 			}
 
 			outerColor = outerColorNext;
 			innerColor = innerColorNext;
 			centerColor = centerColorNext;
 		}
+	}
 
+	void WriteCustomData(const efkRingInstanceParam& instanceParameter, int32_t singleVertexCount)
+	{
 		// custom parameter
 		if (customData1Count_ > 0)
 		{
-			StrideView<float> custom(m_ringBufferData + sizeof(DynamicVertex), stride_, singleVertexCount);
+			StrideView<float> custom(ringBufferData_ + sizeof(DynamicVertex), stride_, singleVertexCount);
 			for (int i = 0; i < singleVertexCount; i++)
 			{
 				auto c = (float*)(&custom[i]);
@@ -655,16 +800,13 @@ protected:
 		if (customData2Count_ > 0)
 		{
 			StrideView<float> custom(
-				m_ringBufferData + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, singleVertexCount);
+				ringBufferData_ + sizeof(DynamicVertex) + sizeof(float) * customData1Count_, stride_, singleVertexCount);
 			for (int i = 0; i < singleVertexCount; i++)
 			{
 				auto c = (float*)(&custom[i]);
 				memcpy(c, instanceParameter.CustomData2.data(), sizeof(float) * customData2Count_);
 			}
 		}
-
-		m_spriteCount += 2 * parameter.VertexCount;
-		m_ringBufferData += stride_ * singleVertexCount;
 	}
 
 	void EndRendering_(RENDERER* renderer, const efkRingNodeParam& param, const ::Effekseer::SIMD::Mat44f& camera)
@@ -674,12 +816,15 @@ protected:
 			for (auto& kv : instances_)
 			{
 				efkVector3D t = kv.Value.SRTMatrix43.GetTranslation();
-
-				Effekseer::SIMD::Vec3f frontDirection = m_renderer->GetCameraFrontDirection();
-				if (!param.IsRightHand)
+				if (param.RenderingTransform.IsEnabled)
 				{
-					frontDirection = -frontDirection;
+					t = Effekseer::SIMD::Vec3f::Transform(t, param.RenderingTransform.Transform);
 				}
+
+				const auto frontDirection = NormalizeCameraFrontForRenderingSpace(
+					Effekseer::SIMD::Vec3f(renderer_->GetCameraFrontDirection()),
+					param.IsRightHand,
+					param.RenderingCoordinateTransform);
 
 				kv.Key = Effekseer::SIMD::Vec3f::Dot(t, frontDirection);
 			}
@@ -695,7 +840,7 @@ protected:
 						  { return a.Key > b.Key; });
 			}
 
-			const auto& state = m_renderer->GetStandardRenderer()->GetState();
+			const auto& state = renderer_->GetStandardRenderer()->GetState();
 
 			for (auto& kv : instances_)
 			{
@@ -709,26 +854,26 @@ protected:
 public:
 	void BeginRendering(const efkRingNodeParam& parameter, int32_t count, void* userData)
 	{
-		BeginRendering_(m_renderer, count, parameter, userData);
+		BeginRendering_(renderer_, count, parameter, userData);
 	}
 
 	void Rendering(const efkRingNodeParam& parameter, const efkRingInstanceParam& instanceParameter, void* userData)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
-		if (m_spriteCount + 2 * parameter.VertexCount > m_renderer->GetSquareMaxCount())
+		if (spriteCount_ + 2 * parameter.VertexCount > renderer_->GetSquareMaxCount())
 			return;
-		Rendering_(parameter, instanceParameter, m_renderer->GetCameraMatrix());
+		Rendering_(parameter, instanceParameter, renderer_->GetCameraMatrix());
 	}
 
 	void EndRendering(const efkRingNodeParam& parameter, void* userData)
 	{
-		if (m_ringBufferData == nullptr)
+		if (ringBufferData_ == nullptr)
 			return;
-		if (m_spriteCount == 0 && parameter.DepthParameterPtr->ZSort == Effekseer::ZSortType::None)
+		if (spriteCount_ == 0 && parameter.DepthParameterPtr->ZSort == Effekseer::ZSortType::None)
 			return;
 
-		EndRendering_(m_renderer, parameter, m_renderer->GetCameraMatrix());
+		EndRendering_(renderer_, parameter, renderer_->GetCameraMatrix());
 	}
 };
 //----------------------------------------------------------------------------------

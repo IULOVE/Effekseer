@@ -23,6 +23,30 @@ namespace Effekseer.GUI.Dock
 			}
 		}
 
+		string tabDisplayLabel = null;
+
+		public string TabDisplayLabel
+		{
+			get
+			{
+				if (tabDisplayLabel != null)
+				{
+					return tabDisplayLabel;
+				}
+
+				if (AllowsShortTab && !string.IsNullOrEmpty(Label))
+				{
+					return Label.Substring(0, 1);
+				}
+
+				return string.Empty;
+			}
+			set
+			{
+				tabDisplayLabel = value;
+			}
+		}
+
 		public string DocPage { get; set; } = string.Empty;
 
 		public string DocURL
@@ -78,6 +102,8 @@ namespace Effekseer.GUI.Dock
 			{
 				if (Manager.IsDockMode())
 				{
+					float dpiScale = Manager.DpiScale;
+
 					if (IsInitialized < 0)
 					{
 						IsInitialized++;
@@ -96,15 +122,22 @@ namespace Effekseer.GUI.Dock
 						flags = swig.WindowFlags.NoScrollbar;
 					}
 
-					if (NoPadding) Manager.NativeManager.PushStyleVar(swig.ImGuiStyleVarFlags.WindowPadding, new swig.Vec2(0.0f, 0.0f));
+					var windowPadding = (NoPadding) ? new swig.Vec2(0.0f, 0.0f) : new swig.Vec2(4.0f * dpiScale, 2.0f * dpiScale);
+
+					Manager.NativeManager.PushStyleVar(swig.ImGuiStyleVarFlags.WindowPadding, windowPadding);
+
+					if (HasToolBar())
+					{
+						flags |= swig.WindowFlags.MenuBar;
+					}
 
 					bool dockEnabled = Manager.NativeManager.BeginDock(
-						Label, TabLabel, ref opened, Visibled && Windowed && !NoCloseButton, flags);
+						Label, TabLabel, TabDisplayLabel, ref opened, Visibled && Windowed && !NoCloseButton, flags);
 
 					Visibled = Manager.NativeManager.IsDockVisibled();
 					Windowed = Manager.NativeManager.IsDockWindowed();
 
-					if (NoPadding) Manager.NativeManager.PopStyleVar();
+					Manager.NativeManager.PopStyleVar();
 
 					if (dockEnabled)
 					{
@@ -129,7 +162,6 @@ namespace Effekseer.GUI.Dock
 					if (Manager.NativeManager.Begin(Label, ref opened))
 					{
 						UpdateInternal();
-
 
 						Controls.Lock();
 
@@ -178,36 +210,36 @@ namespace Effekseer.GUI.Dock
 
 		protected virtual void UpdateToolbar()
 		{
-			bool hasItem = false;
-
-			if (CopyAndPaste != null)
+			if (Manager.NativeManager.BeginMenuBar())
 			{
-				CopyAndPaste.Update();
-				hasItem = true;
+				Manager.NativeManager.PushStyleColor(swig.ImGuiColFlags.Button, 0);
+
+				if (CopyAndPaste != null)
+				{
+					CopyAndPaste.Update();
+				}
+
+				if (!string.IsNullOrEmpty(DocPage))
+				{
+					if (Manager.NativeManager.IconButton(Icons.Help))
+					{
+						Commands.ShowURL(DocURL);
+					}
+
+					if (Functions.CanShowTip())
+					{
+						Manager.NativeManager.SetTooltip(MultiLanguageTextProvider.GetText("Panel_Help_Desc"));
+					}
+				}
+
+				Manager.NativeManager.PopStyleColor();
+				Manager.NativeManager.EndMenuBar();
 			}
+		}
 
-			if (!string.IsNullOrEmpty(DocPage))
-			{
-				if (hasItem)
-				{
-					Manager.NativeManager.SameLine();
-				}
-
-				float dpiScale = Manager.DpiScale;
-				swig.Vec2 size = new swig.Vec2(18 * dpiScale, 18 * dpiScale);
-
-				if (Manager.NativeManager.ImageButton(Images.Icons["Help"], size.X, size.Y))
-				{
-					Commands.ShowURL(DocURL);
-				}
-
-				if (Functions.CanShowTip())
-				{
-					Manager.NativeManager.SetTooltip(MultiLanguageTextProvider.GetText("Panel_Help_Desc"));
-				}
-
-				hasItem = true;
-			}
+		private bool HasToolBar()
+		{
+			return (CopyAndPaste != null) || !string.IsNullOrEmpty(DocPage);
 		}
 	}
 }

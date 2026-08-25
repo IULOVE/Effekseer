@@ -1,5 +1,7 @@
 # Temporary
-build/
+/build
+/build-*
+/build_*
 .vs/
 
 # Compiled Object files
@@ -48,6 +50,9 @@ Dev/release/runtimes/
 Dev/release/resources/fonts/
 Dev/release/resources/icons/
 Dev/release/tools/
+Dev/release/ref/
+Dev/release/createdump
+Dev/release/Effekseer*
 
 Dev/Cpp/include/
 Dev/Cpp/lib/
@@ -57,3 +62,5 @@ mono_crash.*.json
 mono_crash.*.blob
 Script/__pycache__/aceutils.cpython-37.pyc
 Tool/fbxsdk
+
+EffekseerTool/

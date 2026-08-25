@@ -9,14 +9,14 @@ namespace Effekseer
 {
 
 /**
-	@brief	
+	@brief
 	\~English	Default file loader
 	\~Japanese	標準のファイル読み込みクラス
 */
 class DefaultFileReader : public FileReader
 {
 private:
-	FILE* m_filePtr;
+	FILE* filePtr_;
 
 public:
 	DefaultFileReader(FILE* filePtr);
@@ -35,7 +35,7 @@ public:
 class DefaultFileWriter : public FileWriter
 {
 private:
-	FILE* m_filePtr;
+	FILE* filePtr_;
 
 public:
 	DefaultFileWriter(FILE* filePtr);

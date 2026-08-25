@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "imgui_node_editor.h"
+#include <imgui_node_editor.h>
 namespace ed = ax::NodeEditor;
 
 #include "Graphics/efkMat.Graphics.h"
@@ -22,7 +22,7 @@ class Editor;
 class NodeUserDataObject : public EffekseerMaterial::UserObject
 {
 private:
-	std::shared_ptr<Preview> preview;
+	std::shared_ptr<Preview> preview_;
 
 public:
 	NodeUserDataObject();
@@ -32,7 +32,7 @@ public:
 
 	std::shared_ptr<Preview>& GetPreview()
 	{
-		return preview;
+		return preview_;
 	}
 };
 
@@ -100,8 +100,8 @@ private:
 
 	//! popupsed keywords
 	bool isJustNewNodePanelOpened_ = false;
-	std::array<char, 256> searchingKeywords;
-	std::array<char, 256> searchingKeywordsActual;
+	std::array<char, 256> searchingKeywords_;
+	std::array<char, 256> searchingKeywordsActual_;
 
 	std::vector<std::shared_ptr<Texture>> previewTypeButtons_;
 

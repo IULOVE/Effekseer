@@ -48,7 +48,7 @@ inline std::string GetMaterialCommonDefine(ShaderGeneratorTarget type)
 #define FRAC frac
 #define LERP lerp
 )";
-	if (type == ShaderGeneratorTarget::DirectX11 || type == ShaderGeneratorTarget::DirectX12)
+	if (type == ShaderGeneratorTarget::DirectX11 || type == ShaderGeneratorTarget::DirectX12 || type == ShaderGeneratorTarget::WebGPU)
 	{
 		ss << R"(
 #define C_LINEAR linear
@@ -69,10 +69,12 @@ inline std::string GetMaterialCommonDefine(ShaderGeneratorTarget type)
 #define POSITION0 POSITION
 #define SV_POSITION POSITION
 #define SV_Target COLOR
+#define SV_IsFrontFace VFACE
+#define face_t float
+#define IsFrontFace(face) (face > 0.0f)
 )";
 	}
-
-	if (type == ShaderGeneratorTarget::PSSL)
+	else if (type == ShaderGeneratorTarget::PSSL)
 	{
 		ss << R"(
 #define SV_POSITION S_POSITION
@@ -80,13 +82,23 @@ inline std::string GetMaterialCommonDefine(ShaderGeneratorTarget type)
 #define SV_Target S_TARGET_OUTPUT
 #define SampleLevel SampleLOD
 #define SV_InstanceID S_INSTANCE_ID
+#define SV_IsFrontFace S_FRONT_FACE
+#define face_t bool
+#define IsFrontFace(face) (face)
+)";
+	}
+	else
+	{
+		ss << R"(
+#define face_t bool
+#define IsFrontFace(face) (face)
 )";
 	}
 
 	return ss.str();
 }
 
-static char* material_common_vs_functions = R"(
+static const char* material_common_vs_functions = R"(
 
 float2 GetUV(float2 uv)
 {
@@ -105,13 +117,14 @@ float CalcDepthFade(float2 screenUV, float meshZ, float softParticleParam) { ret
 
 )";
 
-static char* material_sprite_vs_pre_simple = R"(
+static const char* material_sprite_vs_pre_simple = R"(
 
 struct VS_Input
 {
 	float3 Pos		: POSITION0;
 	float4 Color		: NORMAL0;
 	float2 UV		: TEXCOORD0;
+	float2 ParticleTime	: TEXCOORD1;
 };
 
 struct VS_Output
@@ -126,6 +139,7 @@ struct VS_Output
 	float3 WorldB : TEXCOORD5;
 	float4 PosP : TEXCOORD6;
 	//float2 ScreenUV : TEXCOORD6;
+	float2 ParticleTime : TEXCOORD7;
 };
 
 cbuffer VSConstantBuffer : register(b0) {
@@ -138,7 +152,7 @@ float4 cameraPosition : register(c10);
 
 )";
 
-static char* material_sprite_vs_pre = R"(
+static const char* material_sprite_vs_pre = R"(
 
 struct VS_Input
 {
@@ -148,6 +162,7 @@ struct VS_Input
 	float4 Tangent		: NORMAL2;
 	float2 UV1		: TEXCOORD0;
 	float2 UV2		: TEXCOORD1;
+	float2 ParticleTime	: TEXCOORD2;
 	//$C_IN1$
 	//$C_IN2$
 };
@@ -164,6 +179,7 @@ struct VS_Output
 	float3 WorldB : TEXCOORD5;
 	float4 PosP : TEXCOORD6;
 	//float2 ScreenUV : TEXCOORD6;
+	float2 ParticleTime : TEXCOORD7;
 	//$C_OUT1$
 	//$C_OUT2$
 };
@@ -178,7 +194,7 @@ float4 cameraPosition : register(c10);
 
 )";
 
-static char* material_sprite_vs_suf1_simple = R"(
+static const char* material_sprite_vs_suf1_simple = R"(
 
 
 VS_Output main( const VS_Input Input )
@@ -204,20 +220,25 @@ VS_Output main( const VS_Input Input )
 	float3 pixelNormalDir = worldNormal;
 	float4 vcolor = Input.Color;
 
+	Output.ParticleTime = Input.ParticleTime;
+	float2 particleTime = Input.ParticleTime.xy;
+
 	// Dummy
+	bool isFrontFace = false;
 	float2 screenUV = float2(0.0, 0.0);
 	float meshZ =  0.0f;
 )";
 
-static char* material_sprite_vs_suf1 = R"(
+static const char* material_sprite_vs_suf1 = R"(
 
 VS_Output main( const VS_Input Input )
 {
 	VS_Output Output = (VS_Output)0;
 	float3 worldPos = Input.Pos;
 	float3 worldNormal = (Input.Normal - float3(0.5, 0.5, 0.5)) * 2.0;
-	float3 worldTangent = (Input.Tangent - float3(0.5, 0.5, 0.5)) * 2.0;
-	float3 worldBinormal = cross(worldNormal, worldTangent);
+	float3 worldTangent = (Input.Tangent.xyz - float3(0.5, 0.5, 0.5)) * 2.0;
+	float tangentHandedness = Input.Tangent.w * 2.0 - 1.0;
+	float3 worldBinormal = cross(worldNormal, worldTangent) * tangentHandedness;
 	float3 objectScale = float3(1.0, 1.0, 1.0);
 
 	// UV
@@ -234,12 +255,16 @@ VS_Output main( const VS_Input Input )
 	float3 pixelNormalDir = worldNormal;
 	float4 vcolor = Input.Color;
 
+	Output.ParticleTime = Input.ParticleTime;
+	float2 particleTime = Input.ParticleTime.xy;
+
 	// Dummy
+	bool isFrontFace = false;
 	float2 screenUV = float2(0.0, 0.0);
 	float meshZ =  0.0f;
 )";
 
-static char* material_sprite_vs_suf2 = R"(
+static const char* material_sprite_vs_suf2 = R"(
 
 	worldPos = worldPos + worldPositionOffset;
 
@@ -272,7 +297,8 @@ struct VS_Input
 	float3 Normal		: NORMAL0;
 	float3 Binormal		: NORMAL1;
 	float3 Tangent		: NORMAL2;
-	float2 UV		: TEXCOORD0;
+	float2 UV1		: TEXCOORD0;
+	float2 UV2		: TEXCOORD1;
 	float4 Color		: NORMAL3;
 )";
 
@@ -304,6 +330,7 @@ struct VS_Output
 	float3 WorldB : TEXCOORD5;
 	float4 PosP : TEXCOORD6;
 	//float2 ScreenUV : TEXCOORD6;
+	float2 ParticleTime : TEXCOORD7;
 	//$C_OUT1$
 	//$C_OUT2$
 };
@@ -318,10 +345,11 @@ float4x4 mCameraProj		: register( c0 );
 float4x4 mModel[10]		: register( c4 );
 float4	fUV[10]			: register( c44 );
 float4	fModelColor[10]		: register( c54 );
+float4	fModelParticleTime[10]	: register( c64 );
 
-float4 mUVInversed		: register(c64);
-float4 predefined_uniform : register(c65);
-float4 cameraPosition : register(c66);
+float4 mUVInversed		: register(c74);
+float4 predefined_uniform : register(c75);
+float4 cameraPosition : register(c76);
 )";
 	}
 	else
@@ -331,10 +359,11 @@ float4x4 mCameraProj		: register( c0 );
 float4x4 mModel[40]		: register( c4 );
 float4	fUV[40]			: register( c164 );
 float4	fModelColor[40]		: register( c204 );
+float4	fModelParticleTime[40]	: register( c244 );
 
-float4 mUVInversed		: register(c244);
-float4 predefined_uniform : register(c245);
-float4 cameraPosition : register(c246);
+float4 mUVInversed		: register(c284);
+float4 predefined_uniform : register(c285);
+float4 cameraPosition : register(c286);
 )";
 	}
 
@@ -345,13 +374,14 @@ float4 cameraPosition : register(c246);
 	return ss.str();
 }
 
-static char* model_vs_suf1 = R"(
+static const char* model_vs_suf1 = R"(
 
 VS_Output main( const VS_Input Input )
 {
 	float4x4 matModel = mModel[Input.Index];
 	float4 uv = fUV[Input.Index];
 	float4 modelColor = fModelColor[Input.Index] * Input.Color;
+	float2 particleTime = fModelParticleTime[Input.Index].xy;
 
 	VS_Output Output = (VS_Output)0;
 	float4 localPosition = { Input.Pos.x, Input.Pos.y, Input.Pos.z, 1.0 }; 
@@ -369,23 +399,19 @@ VS_Output main( const VS_Input Input )
 	objectScale.y = length(mul(matRotModel, float3(0.0, 1.0, 0.0)));
 	objectScale.z = length(mul(matRotModel, float3(0.0, 0.0, 1.0)));
 
-	float2 uv1;
-	uv1.x = Input.UV.x * uv.z + uv.x;
-	uv1.y = Input.UV.y * uv.w + uv.y;
-	float2 uv2 = Input.UV;
-
-	//uv1.y = mUVInversed.x + mUVInversed.y * uv1.y;
-	//uv2.y = mUVInversed.x + mUVInversed.y * uv2.y;
+	float2 uv1 = Input.UV1 * uv.zw + uv.xy;
+	float2 uv2 = Input.UV2 * uv.zw + uv.xy;
 
 	float3 pixelNormalDir = worldNormal;
 	float4 vcolor = modelColor;
 
 	// Dummy
+	bool isFrontFace = false;
 	float2 screenUV = float2(0.0, 0.0);
 	float meshZ =  0.0f;
 )";
 
-static char* model_vs_suf2 = R"(
+static const char* model_vs_suf2 = R"(
 
 	worldPos = worldPos + worldPositionOffset;
 
@@ -399,6 +425,7 @@ static char* model_vs_suf2 = R"(
 	Output.VColor = modelColor;
 	Output.UV1 = uv1;
 	Output.UV2 = uv2;
+	Output.ParticleTime = particleTime.xy;
 
 	Output.PosP = Output.Position;
 	//Output.ScreenUV = Output.Position.xy / Output.Position.w;
@@ -435,6 +462,7 @@ struct PS_Input
 	float3 WorldB : TEXCOORD5;
 	float4 PosP : TEXCOORD6;
 	//float2 ScreenUV : TEXCOORD6;
+	float2 ParticleTime : TEXCOORD7;
 	//$C_PIN1$
 	//$C_PIN2$
 };
@@ -564,7 +592,7 @@ float3 calcDirectionalLightDiffuseColor(float3 diffuseColor, float3 normal, floa
 
 #endif
 
-float4 main( const PS_Input Input ) : SV_Target
+float4 main( const PS_Input Input, face_t face: SV_IsFrontFace ) : SV_Target
 {
 	float2 uv1 = Input.UV1;
 	float2 uv2 = Input.UV2;
@@ -576,7 +604,9 @@ float4 main( const PS_Input Input ) : SV_Target
 
 	float3 pixelNormalDir = worldNormal;
 	float4 vcolor = Input.VColor;
+	float2 particleTime = Input.ParticleTime;
 
+	bool isFrontFace = IsFrontFace(face);
 	float2 screenUV = Input.PosP.xy / Input.PosP.w;
 	float meshZ =  Input.PosP.z / Input.PosP.w;
 	screenUV.xy = float2(screenUV.x + 1.0, 1.0 - screenUV.y) * 0.5;
@@ -585,7 +615,7 @@ float4 main( const PS_Input Input ) : SV_Target
 	return ss.str();
 }
 
-static char* g_material_ps_suf2_unlit = R"(
+static const char* g_material_ps_suf2_unlit = R"(
 
 	float4 Output = float4(emissive, opacity);
 
@@ -597,7 +627,7 @@ static char* g_material_ps_suf2_unlit = R"(
 
 )";
 
-static char* g_material_ps_suf2_lit = R"(
+static const char* g_material_ps_suf2_lit = R"(
 	float3 viewDir = normalize(cameraPosition.xyz - worldPos);
 	float3 diffuse = calcDirectionalLightDiffuseColor(baseColor, pixelNormalDir, lightDirection.xyz, ambientOcclusion);
 	float3 specular = lightColor.xyz * lightScale * calcLightingGGX(pixelNormalDir, viewDir, lightDirection.xyz, roughness, 0.9);
@@ -659,6 +689,19 @@ inline std::string GetMaterialPS_Suf2_Refraction(ShaderGeneratorTarget type)
 
 } // namespace HLSL
 
+bool RequiresPixelScreenPosition(MaterialFile* materialFile, bool isRefraction)
+{
+	if (isRefraction)
+	{
+		return true;
+	}
+
+	const auto code = std::string(materialFile->GetGenericCode());
+	return code.find("CalcDepthFade") != std::string::npos ||
+		   code.find("screenUV") != std::string::npos ||
+		   code.find("meshZ") != std::string::npos;
+}
+
 std::string ShaderGenerator::Replace(std::string target, std::string from_, std::string to_)
 {
 	std::string::size_type Pos(target.find(from_));
@@ -670,6 +713,21 @@ std::string ShaderGenerator::Replace(std::string target, std::string from_, std:
 	}
 
 	return target;
+}
+
+void ShaderGenerator::RemovePixelScreenPosition(ShaderData& shaderData)
+{
+	shaderData.CodeVS = Replace(shaderData.CodeVS, "\n\tfloat4 PosP : TEXCOORD6;", "");
+	shaderData.CodeVS = Replace(shaderData.CodeVS, "\n\t//float2 ScreenUV : TEXCOORD6;", "");
+	shaderData.CodeVS = Replace(shaderData.CodeVS, "\n\tOutput.PosP = Output.Position;", "");
+	shaderData.CodeVS = Replace(shaderData.CodeVS, "\n\t//Output.ScreenUV = Output.Position.xy / Output.Position.w;", "");
+	shaderData.CodeVS = Replace(shaderData.CodeVS, "\n\t//Output.ScreenUV.xy = float2(Output.ScreenUV.x + 1.0, 1.0 - Output.ScreenUV.y) * 0.5;", "");
+
+	shaderData.CodePS = Replace(shaderData.CodePS, "\n\tfloat4 PosP : TEXCOORD6;", "");
+	shaderData.CodePS = Replace(shaderData.CodePS, "\n\t//float2 ScreenUV : TEXCOORD6;", "");
+	shaderData.CodePS = Replace(shaderData.CodePS,
+								"\n\tfloat2 screenUV = Input.PosP.xy / Input.PosP.w;\n\tfloat meshZ =  Input.PosP.z / Input.PosP.w;\n\tscreenUV.xy = float2(screenUV.x + 1.0, 1.0 - screenUV.y) * 0.5;",
+								"\n\tfloat2 screenUV = float2(0.0, 0.0);\n\tfloat meshZ = 0.0f;");
 }
 
 std::string ShaderGenerator::GetType(int32_t i)
@@ -730,6 +788,7 @@ int32_t ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile
 	// gradient
 	bool hasGradient = false;
 	bool hasNoise = false;
+	bool hasHsv = false;
 
 	for (const auto& type : materialFile->RequiredMethods)
 	{
@@ -741,6 +800,10 @@ int32_t ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile
 		{
 			hasNoise = true;
 		}
+		else if (type == MaterialFile::RequiredPredefinedMethodType::Hsv)
+		{
+			hasHsv = true;
+		}
 	}
 
 	if (hasGradient)
@@ -751,6 +814,11 @@ int32_t ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile
 	if (hasNoise)
 	{
 		maincode << Effekseer::Shader::GetNoiseFunctions();
+	}
+
+	if (hasHsv)
+	{
+		maincode << Effekseer::Shader::GetHsvFunctions();
 	}
 
 	for (const auto& gradient : materialFile->FixedGradients)
@@ -775,7 +843,7 @@ int32_t ShaderGenerator::ExportHeader(std::ostringstream& maincode, MaterialFile
 		else
 		{
 			maincode << model_vs_pre_;
-			cind = 7 + instanceCount * 6;
+			cind = 7 + instanceCount * 7;
 		}
 	}
 	else
@@ -909,6 +977,21 @@ ShaderGenerator::ShaderGenerator(
 	, ps_suf2_refraction_(HLSL::GetMaterialPS_Suf2_Refraction(target).c_str())
 	, target_(target)
 {
+	if (target_ == ShaderGeneratorTarget::WebGPU)
+	{
+		sprite_vs_suf2_ = Replace(sprite_vs_suf2_, "mul(mCamera, float4(worldPos, 1.0))", "mul(float4(worldPos, 1.0), mCamera)");
+		sprite_vs_suf2_ = Replace(sprite_vs_suf2_, "mul(mProj, cameraPos)", "mul(cameraPos, mProj)");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul( matModel, localPosition )", "mul( localPosition, matModel )");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul( matRotModel, Input.Normal )", "mul( Input.Normal, matRotModel )");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul( matRotModel, Input.Binormal )", "mul( Input.Binormal, matRotModel )");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul( matRotModel, Input.Tangent )", "mul( Input.Tangent, matRotModel )");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul(matRotModel, float3(1.0, 0.0, 0.0))", "mul(float3(1.0, 0.0, 0.0), matRotModel)");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul(matRotModel, float3(0.0, 1.0, 0.0))", "mul(float3(0.0, 1.0, 0.0), matRotModel)");
+		model_vs_suf1_ = Replace(model_vs_suf1_, "mul(matRotModel, float3(0.0, 0.0, 1.0))", "mul(float3(0.0, 0.0, 1.0), matRotModel)");
+		model_vs_suf2_ = Replace(model_vs_suf2_, "mul( mCameraProj,  float4(worldPos, 1.0) )", "mul( float4(worldPos, 1.0), mCameraProj )");
+
+		ps_suf2_refraction_ = Replace(ps_suf2_refraction_, "mul((float3x3)cameraMat, pixelNormalDir)", "mul(pixelNormalDir, (float3x3)cameraMat)");
+	}
 }
 
 ShaderData ShaderGenerator::GenerateShader(MaterialFile* materialFile,
@@ -923,6 +1006,7 @@ ShaderData ShaderGenerator::GenerateShader(MaterialFile* materialFile,
 	bool isSprite = shaderType == MaterialShaderType::Standard || shaderType == MaterialShaderType::Refraction;
 	bool isRefrection = materialFile->GetHasRefraction() &&
 						(shaderType == MaterialShaderType::Refraction || shaderType == MaterialShaderType::RefractionModel);
+	bool requiresPixelScreenPosition = RequiresPixelScreenPosition(materialFile, isRefrection);
 
 	for (int stage = 0; stage < 2; stage++)
 	{
@@ -1050,6 +1134,8 @@ ShaderData ShaderGenerator::GenerateShader(MaterialFile* materialFile,
 		baseCode = Replace(baseCode, "$LOCALTIME$", "predefined_uniform.w");
 		baseCode = Replace(baseCode, "$UV$", "uv");
 		baseCode = Replace(baseCode, "$MOD", "fmod");
+		baseCode = Replace(baseCode, "$PARTICLE_TIME_NORMALIZED$", "particleTime.x");
+		baseCode = Replace(baseCode, "$PARTICLE_TIME_SECONDS$", "particleTime.y");
 
 		// replace textures
 		for (int32_t i = 0; i < actualTextureCount; i++)
@@ -1133,9 +1219,14 @@ ShaderData ShaderGenerator::GenerateShader(MaterialFile* materialFile,
 		}
 	}
 
+	if (target_ == ShaderGeneratorTarget::DirectX9 && !requiresPixelScreenPosition)
+	{
+		RemovePixelScreenPosition(shaderData);
+	}
+
 	// custom data
-	int32_t inputSlot = 2;
-	int32_t outputSlot = 7;
+	int32_t inputSlot = 3;
+	int32_t outputSlot = 8;
 	if (materialFile->GetCustomData1Count() > 0)
 	{
 		if (isSprite)

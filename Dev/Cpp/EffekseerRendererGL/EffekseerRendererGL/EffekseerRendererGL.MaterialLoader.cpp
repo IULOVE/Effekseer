@@ -1,8 +1,10 @@
 ﻿#include "EffekseerRendererGL.MaterialLoader.h"
 #include "EffekseerRendererGL.ModelRenderer.h"
 #include "EffekseerRendererGL.Shader.h"
+#include "GraphicsDevice.h"
 
 #include <iostream>
+#include <string>
 
 #include "../EffekseerMaterialCompiler/OpenGL/EffekseerMaterialCompilerGL.h"
 #include "Effekseer/Material/Effekseer.CompiledMaterial.h"
@@ -76,6 +78,8 @@ void StoreModelVertexUniform(const ::Effekseer::MaterialFile& materialFile, cons
 		storeVector("UVOffset", generator.VertexModelUVOffset, GL_InstanceCount);
 
 		storeVector("ModelColor", generator.VertexModelColorOffset, GL_InstanceCount);
+
+		storeVector("ModelParticleTime", generator.VertexModelParticleTimeOffset, GL_InstanceCount);
 	}
 	else
 	{
@@ -84,6 +88,8 @@ void StoreModelVertexUniform(const ::Effekseer::MaterialFile& materialFile, cons
 		storeVector("UVOffset", generator.VertexModelUVOffset);
 
 		storeVector("ModelColor", generator.VertexModelColorOffset);
+
+		storeVector("ModelParticleTime", generator.VertexModelParticleTimeOffset);
 	}
 
 	storeVector("mUVInversed", generator.VertexInversedFlagOffset);
@@ -238,6 +244,47 @@ Effekseer::CustomVector<Effekseer::CustomString<char>> StoreTextureLocations(con
 		shaderTypeCount = 2;
 	}
 
+	auto print_shader_compile_errors = [&](const char* vertex_code, const char* pixel_code)
+	{
+		auto gl_device_ = dynamic_cast<Backend::GraphicsDevice*>(graphicsDevice_.Get());
+		std::string vertex_error;
+		std::string pixel_error;
+		std::string program_error;
+
+		if (gl_device_ != nullptr)
+		{
+			vertex_error = gl_device_->GetLastVertexShaderError();
+			pixel_error = gl_device_->GetLastPixelShaderError();
+			program_error = gl_device_->GetLastProgramShaderError();
+		}
+
+		std::cout << "Vertex shader error" << std::endl;
+		if (!vertex_error.empty())
+		{
+			std::cout << vertex_error << std::endl;
+		}
+		if (vertex_code != nullptr)
+		{
+			std::cout << vertex_code << std::endl;
+		}
+
+		std::cout << "Pixel shader error" << std::endl;
+		if (!pixel_error.empty())
+		{
+			std::cout << pixel_error << std::endl;
+		}
+		if (pixel_code != nullptr)
+		{
+			std::cout << pixel_code << std::endl;
+		}
+
+		std::cout << "Proguram error" << std::endl;
+		if (!program_error.empty())
+		{
+			std::cout << program_error << std::endl;
+		}
+	};
+
 	for (int32_t st = 0; st < shaderTypeCount; st++)
 	{
 		auto parameterGenerator = EffekseerRenderer::MaterialShaderParameterGenerator(materialFile, false, st, 1);
@@ -251,12 +298,8 @@ Effekseer::CustomVector<Effekseer::CustomString<char>> StoreTextureLocations(con
 
 		if (shader == nullptr)
 		{
-			std::cout << "Vertex shader error" << std::endl;
-			std::cout << (const char*)binary->GetVertexShaderData(shaderTypesModel[st]) << std::endl;
-
-			std::cout << "Pixel shader error" << std::endl;
-			std::cout << (const char*)binary->GetPixelShaderData(shaderTypesModel[st]) << std::endl;
-
+			print_shader_compile_errors((const char*)binary->GetVertexShaderData(shaderTypesModel[st]),
+										(const char*)binary->GetPixelShaderData(shaderTypesModel[st]));
 			return nullptr;
 		}
 
@@ -299,12 +342,8 @@ Effekseer::CustomVector<Effekseer::CustomString<char>> StoreTextureLocations(con
 
 		if (shader == nullptr)
 		{
-			std::cout << "Vertex shader error" << std::endl;
-			std::cout << (const char*)binary->GetVertexShaderData(shaderTypesModel[st]) << std::endl;
-
-			std::cout << "Pixel shader error" << std::endl;
-			std::cout << (const char*)binary->GetPixelShaderData(shaderTypesModel[st]) << std::endl;
-
+			print_shader_compile_errors((const char*)binary->GetVertexShaderData(shaderTypesModel[st]),
+										(const char*)binary->GetPixelShaderData(shaderTypesModel[st]));
 			return nullptr;
 		}
 
@@ -365,9 +404,12 @@ MaterialLoader ::~MaterialLoader()
 		if (reader != nullptr)
 		{
 			size_t size = reader->GetLength();
+			if (size > static_cast<size_t>(INT32_MAX))
+				return nullptr;
 			std::vector<char> data;
 			data.resize(size);
-			reader->Read(data.data(), size);
+			if (reader->Read(data.data(), size) != size)
+				return nullptr;
 
 			auto material = Load(data.data(), (int32_t)size, ::Effekseer::MaterialFileType::Compiled);
 
@@ -385,9 +427,12 @@ MaterialLoader ::~MaterialLoader()
 		if (reader != nullptr)
 		{
 			size_t size = reader->GetLength();
+			if (size > static_cast<size_t>(INT32_MAX))
+				return nullptr;
 			std::vector<char> data;
 			data.resize(size);
-			reader->Read(data.data(), size);
+			if (reader->Read(data.data(), size) != size)
+				return nullptr;
 
 			auto material = Load(data.data(), (int32_t)size, ::Effekseer::MaterialFileType::Code);
 

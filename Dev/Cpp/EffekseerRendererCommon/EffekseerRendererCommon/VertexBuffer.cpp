@@ -75,9 +75,15 @@ void VertexBufferMultiSize::RenewBuffer()
 	offset_ = 0;
 }
 
-VertexBufferRing::VertexBufferRing(Effekseer::Backend::GraphicsDeviceRef graphicsDevice, int32_t size, int32_t ringCount)
+VertexBufferRing::VertexBufferRing(
+	Effekseer::Backend::GraphicsDeviceRef graphicsDevice,
+	int32_t size,
+	int32_t ringCount,
+	VertexBufferRingMode mode)
 {
+	graphicsDevice_ = graphicsDevice;
 	size_ = size;
+	mode_ = mode;
 	buffer_.resize(size_);
 
 	for (int i = 0; i < ringCount; i++)
@@ -130,10 +136,29 @@ Effekseer::Backend::VertexBufferRef VertexBufferRing::GetCurrentBuffer()
 	return vertexBuffers_[currentIndex_];
 }
 
+void VertexBufferRing::BeginWriteForCommandList()
+{
+	currentIndex_ = 0;
+	offset_ = 0;
+	previous_offset_ = 0;
+}
+
 void VertexBufferRing::RenewBuffer()
 {
 	currentIndex_++;
-	currentIndex_ %= vertexBuffers_.size();
+	if (currentIndex_ >= static_cast<int>(vertexBuffers_.size()))
+	{
+		if (mode_ == VertexBufferRingMode::ExpandableForCommandList)
+		{
+			// Grow instead of wrapping while recorded draws can still reference earlier pages.
+			vertexBuffers_.emplace_back(graphicsDevice_->CreateVertexBuffer(size_, nullptr, true));
+		}
+		else
+		{
+			currentIndex_ %= vertexBuffers_.size();
+		}
+	}
+
 	offset_ = 0;
 	previous_offset_ = 0;
 }

@@ -40,10 +40,10 @@ struct ExternalShaderSettings
 };
 
 /**
-	@brief	
+	@brief
 	\~english A callback to distort a background before drawing
 	\~japanese 背景を歪ませるエフェクトを描画する前に実行されるコールバック
-	
+
 */
 class DistortingCallback
 {
@@ -56,7 +56,7 @@ public:
 	}
 
 	/**
-	@brief	
+	@brief
 	\~english A callback
 	\~japanese コールバック
 	@note
@@ -152,7 +152,15 @@ public:
 	virtual void OnResetDevice() = 0;
 
 	/**
-		@brief	ステートを復帰するかどうかのフラグを設定する。
+		@brief
+		\~English	Sets whether the renderer saves and restores graphics API state around effect rendering.
+		\~Japanese	エフェクト描画の前後でグラフィックスAPIのステートを保存・復元するかどうかを設定する。
+		@param flag
+		\~English	true to restore state in BeginRendering and EndRendering. If false, the application must manage any changed states.
+		\~Japanese	true の場合、BeginRendering と EndRendering でステートを復元する。false の場合、変更されたステートはアプリケーション側で管理する必要がある。
+		\note
+		\~English	DirectX 9, DirectX 11, and OpenGL use this flag to control state restoration. Other backends accept it for interface compatibility and currently do not restore state here.
+		\~Japanese	DirectX 9、DirectX 11、OpenGL ではこのフラグでステート復元を制御する。それ以外のバックエンドではインターフェース互換性のために受け取るが、現在ここではステート復元を行わない。
 	*/
 	virtual void SetRestorationOfStatesFlag(bool flag) = 0;
 
@@ -277,7 +285,26 @@ public:
 	/**
 		@brief	GPUタイマーを生成する。
 	*/
-	virtual ::Effekseer::GPUTimerRef CreateGPUTimer() { return nullptr; }
+	virtual ::Effekseer::GpuTimerRef CreateGpuTimer()
+	{
+		return nullptr;
+	}
+
+	/**
+		@brief	GPUパーティクルを生成する。
+	*/
+	virtual ::Effekseer::GpuParticleSystemRef CreateGpuParticleSystem(const Effekseer::GpuParticleSystem::Settings& settings = {})
+	{
+		return nullptr;
+	}
+
+	/**
+		@brief	GPUパーティクルファクトリを生成する。
+	*/
+	virtual ::Effekseer::GpuParticleFactoryRef CreateGpuParticleFactory()
+	{
+		return nullptr;
+	};
 
 	/**
 		@brief	標準のテクスチャ読込クラスを生成する。
@@ -436,14 +463,14 @@ public:
 	virtual void DeleteProxyTexture(Effekseer::Backend::TextureRef& texture);
 
 	/**
-		@brief	
+		@brief
 		\~English	Get a depth texture and parameters to reconstruct from z to depth
 		\~Japanese	深度画像とZから深度を復元するためのパラメーターを取得する。
 	*/
 	virtual void GetDepth(::Effekseer::Backend::TextureRef& texture, DepthReconstructionParameter& reconstructionParam);
 
 	/**
-		@brief	
+		@brief
 		\~English	Specify a depth texture and parameters to reconstruct from z to depth
 		\~Japanese	深度画像とZから深度を復元するためのパラメーターを設定する。
 	*/
@@ -457,7 +484,7 @@ public:
 	virtual void SetMaintainGammaColorInLinearColorSpace(bool value);
 
 	/**
-		@brief	
+		@brief
 		\~English	Get the graphics device
 		\~Japanese	グラフィクスデバイスを取得する。
 	*/

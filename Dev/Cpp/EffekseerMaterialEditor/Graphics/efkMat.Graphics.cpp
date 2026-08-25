@@ -1,14 +1,7 @@
 
-#ifdef __APPLE__
-#include <OpenGL/gl.h>
-#elif defined(_WIN32)
-#include <GL/glew.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#endif
-
 #include "efkMat.Graphics.h"
+
+#include <OpenGLExtensions.h>
 
 #include <Common/StringHelper.h>
 #include <EffekseerRendererCommon/TextureLoader.h>
@@ -280,6 +273,7 @@ std::shared_ptr<Mesh> Mesh::Load(std::shared_ptr<Graphics> graphics, const char*
 
 				vertexes[index_offset + v].UV1.X = attrib.texcoords[2 * idx.texcoord_index + 0];
 				vertexes[index_offset + v].UV1.Y = 1.0f - attrib.texcoords[2 * idx.texcoord_index + 1];
+				vertexes[index_offset + v].UV2 = vertexes[index_offset + v].UV1;
 				vertexes[index_offset + v].Color[0] = attrib.colors[3 * idx.vertex_index + 0] * 255;
 				vertexes[index_offset + v].Color[1] = attrib.colors[3 * idx.vertex_index + 1] * 255;
 				vertexes[index_offset + v].Color[2] = attrib.colors[3 * idx.vertex_index + 2] * 255;
@@ -335,9 +329,9 @@ std::shared_ptr<Mesh> Mesh::Load(std::shared_ptr<Graphics> graphics, const char*
 	auto ib = graphics->GetGraphicsDevice()->CreateIndexBuffer(indexes.size(), indexes.data(), Effekseer::Backend::IndexBufferStrideType::Stride2);
 
 	auto mesh = std::make_shared<Mesh>();
-	mesh->vb = vb;
-	mesh->ib = ib;
-	mesh->indexCount = indexes.size();
+	mesh->vertexBuffer_ = vb;
+	mesh->indexBuffer_ = ib;
+	mesh->indexCount_ = indexes.size();
 
 	return mesh;
 }
@@ -368,6 +362,11 @@ bool Preview::Initialize(std::shared_ptr<Graphics> graphics)
 	vb[2].UV1.Y = 1.0;
 	vb[3].UV1.X = 0.0;
 	vb[3].UV1.Y = 1.0;
+
+	vb[0].UV2 = vb[0].UV1;
+	vb[1].UV2 = vb[1].UV1;
+	vb[2].UV2 = vb[2].UV1;
+	vb[3].UV2 = vb[3].UV1;
 
 	for (auto& v : vb)
 	{
@@ -698,8 +697,8 @@ void Preview::Render()
 			drawParam.InstanceCount = 1;
 			drawParam.PrimitiveCount = mesh_->GetIndexCount() / 3;
 			drawParam.PipelineStatePtr = pipelineState_;
-			drawParam.VertexUniformBufferPtr = vertexUniformBuffer_;
-			drawParam.PixelUniformBufferPtr = pixelUniformBuffer_;
+			drawParam.VertexUniformBufferPtrs[0] = vertexUniformBuffer_;
+			drawParam.PixelUniformBufferPtrs[0] = pixelUniformBuffer_;
 		}
 		else
 		{
@@ -709,8 +708,8 @@ void Preview::Render()
 			drawParam.InstanceCount = 1;
 			drawParam.PrimitiveCount = 2;
 			drawParam.PipelineStatePtr = pipelineState_;
-			drawParam.VertexUniformBufferPtr = vertexUniformBuffer_;
-			drawParam.PixelUniformBufferPtr = pixelUniformBuffer_;
+			drawParam.VertexUniformBufferPtrs[0] = vertexUniformBuffer_;
+			drawParam.PixelUniformBufferPtrs[0] = pixelUniformBuffer_;
 		}
 
 		for (int i = 0; i < textures_.size(); i++)
@@ -719,8 +718,17 @@ void Preview::Render()
 			{
 				if (textures_[i]->Name == uniformLayout_->GetTextures()[j].c_str())
 				{
-					drawParam.TexturePtrs[j] = textures_[i]->TexturePtr->GetTexture();
-					drawParam.TextureWrapTypes[j] = textures_[i]->SamplerType == TextureSamplerType::Repeat ? Effekseer::Backend::TextureWrapType::Repeat : Effekseer::Backend::TextureWrapType::Clamp;
+					Effekseer::Backend::TextureRef texture;
+					if (textures_[i]->TexturePtr != nullptr)
+					{
+						texture = textures_[i]->TexturePtr->GetTexture();
+					}
+					else
+					{
+						texture = black_->GetTexture();
+					}
+
+					drawParam.SetTexture(j, texture, textures_[i]->SamplerType == TextureSamplerType::Repeat ? Effekseer::Backend::TextureWrapType::Repeat : Effekseer::Backend::TextureWrapType::Clamp, Effekseer::Backend::TextureSamplingType::Linear);
 				}
 			}
 		}
@@ -729,8 +737,7 @@ void Preview::Render()
 		{
 			if (uniformLayout_->GetTextures()[j] == "efk_depth")
 			{
-				drawParam.TexturePtrs[j] = white_->GetTexture();
-				drawParam.TextureWrapTypes[j] = Effekseer::Backend::TextureWrapType::Clamp;
+				drawParam.SetTexture(j, white_->GetTexture(), Effekseer::Backend::TextureWrapType::Clamp, Effekseer::Backend::TextureSamplingType::Linear);
 			}
 		}
 

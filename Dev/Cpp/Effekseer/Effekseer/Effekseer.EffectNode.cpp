@@ -21,16 +21,25 @@
 #include "Effekseer.EffectNodeSprite.h"
 #include "Effekseer.Resource.h"
 #include "Effekseer.Setting.h"
+#include "Parameter/Effekseer.GpuParticlesParameter.h"
 #include "Sound/Effekseer.SoundPlayer.h"
 #include "Utils/Effekseer.BinaryReader.h"
+#include "Utils/Effekseer.Compatiblity.h"
 
-#include "Utils/Compatiblity.h"
+#include <limits>
 
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
 namespace Effekseer
 {
+namespace
+{
+bool IsInfiniteUVAnimation(const UVParameter& uv)
+{
+	return uv.Type == UVAnimationType::Animation && UVFunctions::IsInfiniteValue(uv.Animation.FrameLength);
+}
+} // namespace
 
 //----------------------------------------------------------------------------------
 //
@@ -84,7 +93,7 @@ void EffectNodeImplemented::AdjustSettings(const SettingRef& setting)
 			DepthValues.DepthOffset *= m_effect->GetMaginification();
 			DepthValues.SoftParticle *= m_effect->GetMaginification();
 
-			if (DepthValues.DepthParameter.DepthClipping < FLT_MAX / 10)
+			if (DepthValues.DepthParameter.DepthClipping < std::numeric_limits<float>::max() / 10)
 			{
 				DepthValues.DepthParameter.DepthClipping *= m_effect->GetMaginification();
 			}
@@ -197,26 +206,18 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 			}
 		}
 
-		if (ef->GetVersion() >= Version17Alpha1)
+		if (ef->GetVersion() < Version18Alpha3)
 		{
-			uint8_t flags = 0;
-			memcpy(&flags, pos, sizeof(uint8_t));
-			pos += sizeof(uint8_t);
+			TriggerParam.Load(pos, ef->GetVersion());
 
-			if (flags & (1 << 0))
+			CommonValues.Generation.TriggerToStart = TriggerParam.ToStartGeneration;
+			CommonValues.Generation.TriggerToStop = TriggerParam.ToStopGeneration;
+			CommonValues.Removal.TriggerToRemove = TriggerParam.ToRemove;
+
+			if (CommonValues.Removal.TriggerToRemove.type != TriggerType::None)
 			{
-				memcpy(&TriggerParam.ToStartGeneration, pos, sizeof(TriggerValues));
-				pos += sizeof(TriggerValues);
-			}
-			if (flags & (1 << 1))
-			{
-				memcpy(&TriggerParam.ToStopGeneration, pos, sizeof(TriggerValues));
-				pos += sizeof(TriggerValues);
-			}
-			if (flags & (1 << 2))
-			{
-				memcpy(&TriggerParam.ToRemove, pos, sizeof(TriggerValues));
-				pos += sizeof(TriggerValues);
+				CommonValues.Removal.Flags = static_cast<RemovalTiming>(static_cast<int32_t>(CommonValues.Removal.Flags) |
+																		static_cast<int32_t>(RemovalTiming::WhenTriggered));
 			}
 		}
 
@@ -298,17 +299,45 @@ void EffectNodeImplemented::LoadParameter(unsigned char*& pos, EffectNode* paren
 
 		Sound.Load(pos, ef->GetVersion());
 
+		if (m_effect->GetVersion() >= Version18Alpha1)
+		{
+			int gpuParticleEnabled = 0;
+			memcpy(&gpuParticleEnabled, pos, sizeof(int));
+			pos += sizeof(int);
+
+			if (gpuParticleEnabled)
+			{
+				auto gpuParticlesParamSet = LoadGpuParticlesParameter(pos, ef->GetVersion(), m_effect->GetMaginification(), setting->GetCoordinateSystem());
+
+				if (auto factory = setting->GetGpuParticleFactory())
+				{
+					GpuParticlesResource = factory->CreateResource(gpuParticlesParamSet, m_effect);
+				}
+			}
+		}
+
 		AdjustSettings(setting);
 	}
 
 	int nodeCount = 0;
 	memcpy(&nodeCount, pos, sizeof(int));
 	pos += sizeof(int);
+	if (nodeCount < 0 || nodeCount > 1024)
+	{
+		isLoadingValid_ = false;
+		return;
+	}
 	EffekseerPrintDebug("ChildrenCount : %d\n", nodeCount);
 	m_Nodes.resize(nodeCount);
 	for (size_t i = 0; i < m_Nodes.size(); i++)
 	{
 		m_Nodes[i] = EffectNodeImplemented::Create(m_effect, this, pos);
+		if (m_Nodes[i] == nullptr)
+		{
+			m_Nodes.resize(i);
+			isLoadingValid_ = false;
+			return;
+		}
 	}
 }
 
@@ -344,6 +373,77 @@ void EffectNodeImplemented::CalcCustomData(const Instance* instance, std::array<
 			}
 		}
 	}
+}
+
+void EffectNodeImplemented::ApplyRendererCommonUVHorizontalFlip(Instance& instance, IRandObject& rand) const
+{
+	bool isFlipped = false;
+
+	const int32_t probability = RendererCommon.UVHorizontalFlipProbability;
+	if (probability > 0)
+	{
+		const auto threshold = static_cast<float>(probability);
+		isFlipped = rand.GetRand() * 100.0f < threshold;
+	}
+
+	instance.SetUVFlippedH(isFlipped);
+}
+
+void EffectNodeImplemented::InitializeTrailUVAnimationCache(TrailUVAnimationCache& cache)
+{
+	for (int32_t i = 0; i < ParameterRendererCommon::UVParameterNum; i++)
+	{
+		cache.IsInfiniteUVInitialized[i] = false;
+	}
+
+	cache.InfiniteFlipbookIndexAndNextRate = 0.0f;
+	cache.IsInfiniteFlipbookIndexAndNextRateInitialized = false;
+}
+
+RectF EffectNodeImplemented::GetTrailUV(TrailUVAnimationCache& cache,
+										Instance* groupFirst,
+										const ParameterRendererCommon& rendererCommon,
+										int32_t index,
+										float livingTime,
+										float livedTime)
+{
+	if (IsInfiniteUVAnimation(rendererCommon.UVs[index]))
+	{
+		if (!cache.IsInfiniteUVInitialized[index])
+		{
+			const auto uv = groupFirst->GetUV(index, livingTime, livedTime);
+			cache.InfiniteUVs[index][0] = uv.X;
+			cache.InfiniteUVs[index][1] = uv.Y;
+			cache.InfiniteUVs[index][2] = uv.Width;
+			cache.InfiniteUVs[index][3] = uv.Height;
+			cache.IsInfiniteUVInitialized[index] = true;
+		}
+
+		return RectF(cache.InfiniteUVs[index][0],
+					 cache.InfiniteUVs[index][1],
+					 cache.InfiniteUVs[index][2],
+					 cache.InfiniteUVs[index][3]);
+	}
+
+	return groupFirst->GetUV(index, livingTime, livedTime);
+}
+
+float EffectNodeImplemented::GetTrailFlipbookIndexAndNextRate(TrailUVAnimationCache& cache,
+															  Instance* groupFirst,
+															  const ParameterRendererCommon& rendererCommon)
+{
+	if (IsInfiniteUVAnimation(rendererCommon.UVs[0]))
+	{
+		if (!cache.IsInfiniteFlipbookIndexAndNextRateInitialized)
+		{
+			cache.InfiniteFlipbookIndexAndNextRate = groupFirst->GetFlipbookIndexAndNextRate();
+			cache.IsInfiniteFlipbookIndexAndNextRateInitialized = true;
+		}
+
+		return cache.InfiniteFlipbookIndexAndNextRate;
+	}
+
+	return groupFirst->GetFlipbookIndexAndNextRate();
 }
 
 bool EffectNodeImplemented::Traverse(const std::function<bool(EffectNodeImplemented*)>& visitor)
@@ -557,26 +657,26 @@ void EffectNodeImplemented::UpdateRenderedInstance(Instance& instance, InstanceG
 float EffectNodeImplemented::GetFadeAlpha(const Instance& instance) const
 {
 	float alpha = 1.0f;
+	float eps = 0.0001f;
 
-	if (RendererCommon.FadeInType == ParameterRendererCommon::FADEIN_ON && instance.m_LivingTime < RendererCommon.FadeIn.Frame)
+	if (RendererCommon.FadeInType == ParameterRendererCommon::FADEIN_ON && instance.livingTime_ < RendererCommon.FadeIn.Frame)
 	{
+		const auto fadeIn = Max(eps, static_cast<float>(RendererCommon.FadeIn.Frame));
 		float v = 1.0f;
-		RendererCommon.FadeIn.Value.setValueToArg(v, 0.0f, 1.0f, (float)instance.m_LivingTime / (float)RendererCommon.FadeIn.Frame);
-
+		RendererCommon.FadeIn.Value.setValueToArg(v, 0.0f, 1.0f, instance.livingTime_ / fadeIn);
 		alpha *= v;
 	}
 
 	if (RendererCommon.FadeOutType == ParameterRendererCommon::FADEOUT_WITHIN_LIFETIME)
 	{
-		if (instance.m_LivingTime + RendererCommon.FadeOut.Frame > instance.m_LivedTime)
+		if (instance.livingTime_ + RendererCommon.FadeOut.Frame > instance.livedTime_)
 		{
+			const auto fadeOut = Max(eps, static_cast<float>(RendererCommon.FadeOut.Frame));
 			float v = 1.0f;
 			RendererCommon.FadeOut.Value.setValueToArg(v,
 													   1.0f,
 													   0.0f,
-													   (float)(instance.m_LivingTime + RendererCommon.FadeOut.Frame - instance.m_LivedTime) /
-														   (float)RendererCommon.FadeOut.Frame);
-
+													   (instance.livingTime_ + fadeOut - instance.livedTime_) / fadeOut);
 			alpha *= v;
 		}
 	}
@@ -584,12 +684,12 @@ float EffectNodeImplemented::GetFadeAlpha(const Instance& instance) const
 	{
 		if (instance.IsActive())
 		{
+			const auto fadeOut = Max(eps, static_cast<float>(RendererCommon.FadeOut.Frame));
 			float v = 1.0f;
 			RendererCommon.FadeOut.Value.setValueToArg(v,
 													   1.0f,
 													   0.0f,
-													   instance.m_RemovingTime / RendererCommon.FadeOut.Frame);
-
+													   instance.removingTime_ / fadeOut);
 			alpha *= v;
 		}
 	}
@@ -601,16 +701,19 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 {
 	EffectInstanceTerm ret;
 
-	auto addWithClip = [](int v1, int v2) -> int
+	const int int_max = std::numeric_limits<int>::max();
+	const int half_int_max = int_max / 2;
+
+	auto addWithClip = [half_int_max, int_max](int v1, int v2) -> int
 	{
 		v1 = Max(v1, 0);
 		v2 = Max(v2, 0);
 
-		if (v1 >= INT_MAX / 2)
-			return INT_MAX;
+		if (v1 >= half_int_max)
+			return int_max;
 
-		if (v2 >= INT_MAX / 2)
-			return INT_MAX;
+		if (v2 >= half_int_max)
+			return int_max;
 
 		return v1 + v2;
 	};
@@ -618,35 +721,41 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 	int lifeMin = CommonValues.life.min;
 	int lifeMax = CommonValues.life.max;
 
-	if (CommonValues.RemoveWhenLifeIsExtinct <= 0)
+	if (!HasRemovalTiming(CommonValues.Removal.Flags, RemovalTiming::WhenLifeIsExtinct))
 	{
-		lifeMin = INT_MAX;
-		lifeMax = INT_MAX;
+		lifeMin = int_max;
+		lifeMax = int_max;
 	}
 
-	auto firstBeginMin = static_cast<int32_t>(CommonValues.GenerationTimeOffset.min);
-	auto firstBeginMax = static_cast<int32_t>(CommonValues.GenerationTimeOffset.max);
+	auto firstBeginMin = static_cast<int32_t>(CommonValues.Generation.Offset.min);
+	auto firstBeginMax = static_cast<int32_t>(CommonValues.Generation.Offset.max);
 	auto firstEndMin = addWithClip(firstBeginMin, lifeMin);
 	auto firstEndMax = addWithClip(firstBeginMax, lifeMax);
 
 	auto lastBeginMin = 0;
 	auto lastBeginMax = 0;
-	if (CommonValues.MaxGeneration > INT_MAX / 2)
+	if (CommonValues.MaxGeneration > half_int_max)
 	{
-		lastBeginMin = INT_MAX / 2;
+		lastBeginMin = half_int_max;
 	}
 	else
 	{
-		lastBeginMin = firstBeginMin + static_cast<int32_t>((CommonValues.MaxGeneration - 1) * CommonValues.GenerationTime.min);
+		lastBeginMin = firstBeginMin + static_cast<int32_t>((CommonValues.MaxGeneration - 1) * CommonValues.Generation.Interval.min);
 	}
 
-	if (CommonValues.MaxGeneration > INT_MAX / 2)
+	if (CommonValues.MaxGeneration > half_int_max)
 	{
-		lastBeginMax = INT_MAX / 2;
+		lastBeginMax = half_int_max;
 	}
 	else
 	{
-		lastBeginMax = firstBeginMax + static_cast<int32_t>((CommonValues.MaxGeneration - 1) * CommonValues.GenerationTime.max);
+		lastBeginMax = firstBeginMax + static_cast<int32_t>((CommonValues.MaxGeneration - 1) * CommonValues.Generation.Interval.max);
+	}
+
+	if (CommonValues.Generation.Type == GenerationTiming::Trigger)
+	{
+		lastBeginMin = half_int_max;
+		lastBeginMax = half_int_max;
 	}
 
 	auto lastEndMin = addWithClip(lastBeginMin, lifeMin);
@@ -657,7 +766,7 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 	auto parentLastTermMin = parentTerm.LastInstanceEndMin - parentTerm.LastInstanceStartMin;
 	auto parentLastTermMax = parentTerm.LastInstanceEndMax - parentTerm.LastInstanceStartMax;
 
-	if (CommonValues.RemoveWhenParentIsRemoved > 0)
+	if (HasRemovalTiming(CommonValues.Removal.Flags, RemovalTiming::WhenParentIsRemoved))
 	{
 		if (firstEndMin - firstBeginMin > parentFirstTermMin)
 			firstEndMin = firstBeginMin + parentFirstTermMin;
@@ -665,7 +774,7 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 		if (firstEndMax - firstBeginMax > parentFirstTermMax)
 			firstEndMax = firstBeginMax + parentFirstTermMax;
 
-		if (lastEndMin > INT_MAX / 2)
+		if (lastEndMin > half_int_max)
 		{
 			lastBeginMin = parentLastTermMin;
 			lastEndMin = parentLastTermMin;
@@ -675,7 +784,7 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 			lastEndMin = lastBeginMin + parentLastTermMin;
 		}
 
-		if (lastEndMax > INT_MAX / 2)
+		if (lastEndMax > half_int_max)
 		{
 			lastBeginMax = parentLastTermMax;
 			lastEndMax = parentLastTermMax;
@@ -697,7 +806,7 @@ EffectInstanceTerm EffectNodeImplemented::CalculateInstanceTerm(EffectInstanceTe
 	ret.LastInstanceEndMax = addWithClip(parentTerm.LastInstanceStartMax, lastEndMax);
 
 	// check children
-	if (CommonValues.RemoveWhenChildrenIsExtinct > 0)
+	if (HasRemovalTiming(CommonValues.Removal.Flags, RemovalTiming::WhenChildrenIsExtinct))
 	{
 		int childFirstEndMin = 0;
 		int childFirstEndMax = 0;
@@ -767,10 +876,17 @@ EffectNodeImplemented* EffectNodeImplemented::Create(Effect* effect, EffectNode*
 	}
 	else
 	{
-		assert(0);
+		return nullptr;
 	}
 
+	if (effectnode == nullptr)
+		return nullptr;
 	effectnode->LoadParameter(pos, parent, effect->GetSetting());
+	if (!effectnode->isLoadingValid_)
+	{
+		delete effectnode;
+		return nullptr;
+	}
 
 	return effectnode;
 }

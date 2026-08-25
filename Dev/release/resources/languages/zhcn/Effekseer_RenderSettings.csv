@@ -16,15 +16,15 @@ StandardColorType_Fixed_Name,固定
 StandardColorType_Random_Name,随机
 StandardColorType_Easing_Name,缓动
 StandardColorType_FCurve_Name,F曲线（RGBA）
-StandardColorType_Gradient_Name,梯度
+StandardColorType_Gradient_Name,漸變
 TextureUVTypeParameter_Type_Name,UV类型
-TextureUVTypeParameter_TileLength_Name,Tile Length
+TextureUVTypeParameter_TileLength_Name,瓦片长度
 TextureUVTypeParameter_TileEdgeHead_Name,头部的瓦片数量
 TextureUVTypeParameter_TileEdgeTail_Name,尾部的瓦片数量
 TextureUVTypeParameter_TileLoopingArea_Name,循环区域
 TextureUVTypeParameter_Type_Strech_Name,拉伸
 TextureUVTypeParameter_Type_Tile_Name,瓦片
-TextureUVTypeParameter_Type_TilePerParticle_Name,Tile(Per particle)
+TextureUVTypeParameter_Type_TilePerParticle_Name,瓦片（每粒子）
 ,
 CullingType_Front_Name,正面可见
 CullingType_Back_Name,背面可见
@@ -115,6 +115,8 @@ RS_Model_Model_Desc,模型文件
 RS_Model_Billboard_Name,放置方法
 RS_Model_Culling_Name,剔除
 RS_Model_Color_Name,颜色
+RS_Model_ExternalIndex_Name,外部模型索引
+RS_Model_ExternalIndex_Desc,外部模型索引。
 ,
 RS_Ring_RingShape_Name,形状
 RS_Ring_RenderingOrder_Name,渲染顺序

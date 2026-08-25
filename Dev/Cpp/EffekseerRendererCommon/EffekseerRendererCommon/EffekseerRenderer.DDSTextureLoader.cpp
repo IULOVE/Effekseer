@@ -1,6 +1,8 @@
 #ifndef __DISABLED_DEFAULT_TEXTURE_LOADER__
 
 #include "EffekseerRenderer.DDSTextureLoader.h"
+#include "../../Effekseer/Effekseer/Utils/Effekseer.BinaryReader.h"
+#include <limits>
 #include <stdint.h>
 
 namespace EffekseerRenderer
@@ -20,6 +22,8 @@ enum class DdsDx10Format : uint32_t
 	BC4_SNORM = 81,
 	BC5_UNORM = 83,
 	BC5_SNORM = 84,
+	BC7_UNORM = 98,
+	BC7_UNORM_SRGB = 99,
 };
 
 constexpr uint32_t MakeFourCC(const char v1, const char v2, const char v3, const char v4)
@@ -68,10 +72,12 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 		uint32_t miscFlags2;
 	};
 
-	auto p = (uint8_t*)data;
-	//const uint32_t FOURCC_DXT1 = 0x31545844; //(MAKEFOURCC('D','X','T','1'))
-	//const uint32_t FOURCC_DXT3 = 0x33545844; //(MAKEFOURCC('D','X','T','3'))
-	//const uint32_t FOURCC_DXT5 = 0x35545844; //(MAKEFOURCC('D','X','T','5'))
+	if (data == nullptr || size < 0)
+		return false;
+	Effekseer::BinaryReader<true> reader(static_cast<const uint8_t*>(data), static_cast<size_t>(size));
+	// const uint32_t FOURCC_DXT1 = 0x31545844; //(MAKEFOURCC('D','X','T','1'))
+	// const uint32_t FOURCC_DXT3 = 0x33545844; //(MAKEFOURCC('D','X','T','3'))
+	// const uint32_t FOURCC_DXT5 = 0x35545844; //(MAKEFOURCC('D','X','T','5'))
 
 	const uint32_t FOURCC_DXT1 = MakeFourCC('D', 'X', 'T', '1');
 	const uint32_t FOURCC_DXT3 = MakeFourCC('D', 'X', 'T', '3');
@@ -80,21 +86,13 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 	assert(FOURCC_DXT3 == 0x33545844);
 	assert(FOURCC_DXT5 == 0x35545844);
 
-	if (size < 4 + sizeof(DDS_HEADER))
+	std::array<char, 4> signature{};
+	if (!reader.Read(signature.data(), 4) || memcmp(signature.data(), "DDS ", 4) != 0)
 		return false;
-
-	if (p[0] == 'D' && p[1] == 'D' && p[2] == 'S' && p[3] == ' ')
-	{
-		p += 4;
-	}
-	else
-	{
-		return false;
-	}
 
 	DDS_HEADER dds;
-	memcpy(&dds, p, sizeof(DDS_HEADER));
-	p += sizeof(DDS_HEADER);
+	if (!reader.Read(dds))
+		return false;
 
 	DDS_HEADER_DXT10 dds_dxt10;
 
@@ -102,11 +100,12 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 	if (dds.ddspf.dwFourCC == MakeFourCC('D', 'X', '1', '0'))
 	{
 		hasDX10Flag = true;
-		memcpy(&dds_dxt10, p, sizeof(DDS_HEADER_DXT10));
-		p += sizeof(DDS_HEADER_DXT10);
+		if (!reader.Read(dds_dxt10))
+			return false;
 	}
 
-	const auto detectFormat = [&]() -> Effekseer::Backend::TextureFormatType {
+	const auto detectFormat = [&]() -> Effekseer::Backend::TextureFormatType
+	{
 		if (hasDX10Flag)
 		{
 			if (dds_dxt10.dxgiFormat == DdsDx10Format::R8G8B8A8_UNORM)
@@ -140,6 +139,14 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 			else if (dds_dxt10.dxgiFormat == DdsDx10Format::BC3_UNORM_SRGB)
 			{
 				return Effekseer::Backend::TextureFormatType::BC3_SRGB;
+			}
+			else if (dds_dxt10.dxgiFormat == DdsDx10Format::BC7_UNORM)
+			{
+				return Effekseer::Backend::TextureFormatType::BC7;
+			}
+			else if (dds_dxt10.dxgiFormat == DdsDx10Format::BC7_UNORM_SRGB)
+			{
+				return Effekseer::Backend::TextureFormatType::BC7_SRGB;
 			}
 			else
 			{
@@ -179,28 +186,35 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 	if (format == Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM ||
 		format == Effekseer::Backend::TextureFormatType::R8G8B8A8_UNORM_SRGB)
 	{
-		textureFormatType = Effekseer::TextureFormatType::ABGR8;
+		textureFormatType_ = Effekseer::TextureFormatType::ABGR8;
 		blockSize = 4;
 		isCompressed = false;
 	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC1 ||
 			 format == Effekseer::Backend::TextureFormatType::BC1_SRGB)
 	{
-		textureFormatType = Effekseer::TextureFormatType::BC1;
+		textureFormatType_ = Effekseer::TextureFormatType::BC1;
 		blockSize = 8;
 		isCompressed = true;
 	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC2 ||
 			 format == Effekseer::Backend::TextureFormatType::BC2_SRGB)
 	{
-		textureFormatType = Effekseer::TextureFormatType::BC2;
+		textureFormatType_ = Effekseer::TextureFormatType::BC2;
 		blockSize = 16;
 		isCompressed = true;
 	}
 	else if (format == Effekseer::Backend::TextureFormatType::BC3 ||
 			 format == Effekseer::Backend::TextureFormatType::BC3_SRGB)
 	{
-		textureFormatType = Effekseer::TextureFormatType::BC3;
+		textureFormatType_ = Effekseer::TextureFormatType::BC3;
+		blockSize = 16;
+		isCompressed = true;
+	}
+	else if (format == Effekseer::Backend::TextureFormatType::BC7 ||
+			 format == Effekseer::Backend::TextureFormatType::BC7_SRGB)
+	{
+		textureFormatType_ = Effekseer::TextureFormatType::BC7;
 		blockSize = 16;
 		isCompressed = true;
 	}
@@ -209,29 +223,45 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 		return false;
 	}
 
-	backendTextureFormatType = format;
-	textures_.reserve(dds.dwMipMapCount);
+	backendTextureFormatType_ = format;
+	uint32_t mipLevelCount = dds.dwMipMapCount;
+	if (mipLevelCount == 0)
+	{
+		// Some DDS files omit the mipmap count flag when only a single level exists.
+		mipLevelCount = 1;
+	}
+	if (mipLevelCount > 32 || dds.dwWidth == 0 || dds.dwHeight == 0 ||
+		dds.dwWidth > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
+		dds.dwHeight > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
+		return false;
+
+	textures_.reserve(mipLevelCount);
 
 	int32_t width = static_cast<int32_t>(dds.dwWidth);
 	int32_t height = static_cast<int32_t>(dds.dwHeight);
 
-	for (size_t i = 0; i < dds.dwMipMapCount; i++)
+	for (size_t i = 0; i < mipLevelCount; i++)
 	{
-		int32_t textureSize{};
+		uint64_t textureSize = 0;
 
 		if (isCompressed)
 		{
-			textureSize = ((width + 3) / 4) * ((height + 3) / 4) * blockSize;
+			textureSize = ((static_cast<uint64_t>(width) + 3) / 4) * ((static_cast<uint64_t>(height) + 3) / 4) * static_cast<uint64_t>(blockSize);
 		}
 		else
 		{
-			textureSize = width * height * blockSize;
+			textureSize = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * static_cast<uint64_t>(blockSize);
+		}
+
+		if (textureSize > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) || !reader.CanRead(static_cast<size_t>(textureSize)))
+		{
+			return false;
 		}
 
 		::Effekseer::CustomVector<uint8_t> textureData;
-		textureData.resize(textureSize);
-
-		memcpy(textureData.data(), p, textureData.size());
+		textureData.resize(static_cast<size_t>(textureSize));
+		if (!reader.ReadBytes(textureData.data(), static_cast<size_t>(textureSize)))
+			return false;
 		textures_.emplace_back(Texture{width, height, std::move(textureData)});
 
 		if (width > 1)
@@ -243,12 +273,10 @@ bool DDSTextureLoader::Load(const void* data, int32_t size)
 			height = (height >> 1);
 		else
 			height = 1;
-
-		p += textureSize;
 	}
 
-	textureWidth = static_cast<int32_t>(dds.dwWidth);
-	textureHeight = static_cast<int32_t>(dds.dwHeight);
+	textureWidth_ = static_cast<int32_t>(dds.dwWidth);
+	textureHeight_ = static_cast<int32_t>(dds.dwHeight);
 
 	return true;
 }

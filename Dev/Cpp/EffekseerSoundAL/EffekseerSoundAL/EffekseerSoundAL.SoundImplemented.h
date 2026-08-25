@@ -1,6 +1,6 @@
 ﻿
-#ifndef	__EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
-#define	__EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
+#ifndef __EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
+#define __EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
 
 //----------------------------------------------------------------------------------
 // Include
@@ -25,8 +25,8 @@ class SoundVoiceContainer;
 
 class SoundImplemented : public Sound, public Effekseer::ReferenceObject
 {
-	SoundVoiceContainer*	m_voiceContainer;
-	bool					m_mute;
+	SoundVoiceContainer* voiceContainer_ = nullptr;
+	bool mute_ = false;
 
 public:
 	SoundImplemented();
@@ -34,28 +34,32 @@ public:
 
 	void Destroy() override;
 
-	bool Initialize( int32_t numVoices );
-	
-	void SetListener( const ::Effekseer::Vector3D& pos, 
-		const ::Effekseer::Vector3D& at, const ::Effekseer::Vector3D& up ) override;
-	
+	bool Initialize(int32_t numVoices);
+
+	void SetListener(const ::Effekseer::Vector3D& pos,
+					 const ::Effekseer::Vector3D& at,
+					 const ::Effekseer::Vector3D& up) override;
+
 	::Effekseer::SoundPlayerRef CreateSoundPlayer() override;
 
-	::Effekseer::SoundLoaderRef CreateSoundLoader( ::Effekseer::FileInterfaceRef fileInterface = NULL ) override;
-	
+	::Effekseer::SoundLoaderRef CreateSoundLoader(::Effekseer::FileInterfaceRef fileInterface = NULL) override;
+
 	void StopAllVoices() override;
 
-	void SetMute( bool mute ) override;
+	void SetMute(bool mute) override;
 
-	bool GetMute() 			{return m_mute;}
+	bool GetMute()
+	{
+		return mute_;
+	}
 
 	SoundVoice* GetVoice();
-	
-	void StopTag( ::Effekseer::SoundTag tag );
 
-	void PauseTag( ::Effekseer::SoundTag tag, bool pause );
-	
-	bool CheckPlayingTag( ::Effekseer::SoundTag tag );
+	void StopTag(::Effekseer::SoundTag tag);
+
+	void PauseTag(::Effekseer::SoundTag tag, bool pause);
+
+	bool CheckPlayingTag(::Effekseer::SoundTag tag);
 
 	virtual int GetRef() override
 	{
@@ -75,8 +79,8 @@ using SoundImplementedRef = ::Effekseer::RefPtr<SoundImplemented>;
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-}
+} // namespace EffekseerSound
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-#endif	// __EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
+#endif // __EFFEKSEERRSOUND_SOUND_IMPLEMENTED_H__
